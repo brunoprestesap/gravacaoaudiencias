@@ -1,0 +1,57 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  username  String   @unique
+  password  String
+  name      String
+  role      Role     @default(SERVIDOR)
+  vara      String?
+  createdAt DateTime @default(now())
+
+  gravacoes Gravacao[]
+}
+
+enum Role {
+  SERVIDOR
+  JUIZ
+}
+
+model Gravacao {
+  id               String          @id @default(cuid())
+  numeroProcesso   String
+  classeProcessual String?
+  partes           String?
+  vara             String?
+  nomeJuiz         String?
+  tipoAudiencia    String?
+  dataAudiencia    DateTime?
+  modo             ModoGravacao
+  duracao          Int?
+  tamanhoArquivo   Int?
+  caminhoArquivo   String?
+  status           StatusGravacao  @default(EM_ANDAMENTO)
+  userId           String
+  user             User            @relation(fields: [userId], references: [id])
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+}
+
+enum ModoGravacao {
+  PRESENCIAL
+  HIBRIDO
+}
+
+enum StatusGravacao {
+  EM_ANDAMENTO
+  PAUSADA
+  FINALIZADA
+  INTERROMPIDA
+}
