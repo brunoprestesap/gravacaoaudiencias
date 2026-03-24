@@ -42,6 +42,7 @@ export const useChunkStorage = (gravacaoId: string) => {
   });
   const dbRef = useRef<IDBPDatabase | null>(null);
   const chunkIndexRef = useRef(0);
+  const segmentIndexRef = useRef(0);
   const initializedRef = useRef(false);
 
   // Load existing chunks from IndexedDB on mount (critical for recovery)
@@ -59,10 +60,14 @@ export const useChunkStorage = (gravacaoId: string) => {
 
         if (existingChunks.length > 0) {
           const maxIndex = Math.max(...existingChunks.map((c) => c.chunkIndex));
+          const maxSegmentIndex = Math.max(
+            ...existingChunks.map((c) => c.segmentIndex ?? 0)
+          );
           const totalBytes = existingChunks.reduce((sum, c) => sum + c.data.size, 0);
           const lastTimestamp = Math.max(...existingChunks.map((c) => c.timestamp));
 
           chunkIndexRef.current = maxIndex + 1;
+          segmentIndexRef.current = maxSegmentIndex;
           setState({
             chunkCount: existingChunks.length,
             totalBytes,
@@ -98,6 +103,7 @@ export const useChunkStorage = (gravacaoId: string) => {
             id: `${gravacaoId}-chunk-${index}`,
             gravacaoId,
             chunkIndex: index,
+            segmentIndex: segmentIndexRef.current,
             data: blob,
             timestamp: now,
             status: "pending",
@@ -209,7 +215,12 @@ export const useChunkStorage = (gravacaoId: string) => {
 
   const reset = useCallback(() => {
     chunkIndexRef.current = 0;
+    segmentIndexRef.current = 0;
     setState({ chunkCount: 0, totalBytes: 0, lastSavedAt: null, error: null });
+  }, []);
+
+  const beginNewSegment = useCallback(() => {
+    segmentIndexRef.current += 1;
   }, []);
 
   return {
@@ -222,5 +233,6 @@ export const useChunkStorage = (gravacaoId: string) => {
     markRecoveryInterrupted,
     clearRecoveryRecord,
     reset,
+    beginNewSegment,
   };
 };

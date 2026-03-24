@@ -5,19 +5,31 @@ import { VideoPreview } from "./VideoPreview";
 import { RecordingControls } from "./RecordingControls";
 import { RecordingStatus } from "./RecordingStatus";
 import { LayoutSwitcher } from "./LayoutSwitcher";
+import { MultiCameraLayoutSwitcher } from "./MultiCameraLayoutSwitcher";
+import { CameraSelector } from "./CameraSelector";
 import { useMediaRecorder } from "@/hooks/useMediaRecorder";
 import { useChunkStorage } from "@/hooks/useChunkStorage";
 import { useDeviceDetection } from "@/hooks/useDeviceDetection";
-import { useScreenCapture } from "@/hooks/useScreenCapture";
+import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
 import { useToast } from "@/hooks/useToast";
+import { useAudioAnalyser } from "@/hooks/useAudioAnalyser";
+import { useAudioLevel } from "@/hooks/useAudioLevel";
+import { AudioLevelIndicator } from "./AudioLevelIndicator";
+import { useLiveTranscription } from "@/hooks/useLiveTranscription";
+import { useHybridStream } from "@/hooks/useHybridStream";
+import { useMultiCameraStream } from "@/hooks/useMultiCameraStream";
 import { Modal } from "@/components/ui/Modal";
-import { combineStreams, consolidateChunks, uploadConsolidated, type CombinedStreamHandle } from "@/lib/media-utils";
-import type { ProcessMetadata, ModoGravacao, HybridLayout } from "@/types/recording";
+import { uploadRecoverySegments } from "@/lib/upload-client";
+import { buildSegmentsFromChunks } from "@/lib/chunk-segmentation";
+import { RECORDING } from "@/lib/constants";
+import type { ProcessMetadata, ModoGravacao, HybridLayout, MultiCameraLayout } from "@/types/recording";
 
 interface RecordingScreenProps {
   gravacaoId: string;
   metadata: ProcessMetadata;
   modo: ModoGravacao;
+  initialSelectedCameras?: string[];
+  initialSelectedMicrophone?: string;
   onComplete?: () => void;
 }
 
@@ -25,30 +37,41 @@ export const RecordingScreen = ({
   gravacaoId,
   metadata,
   modo,
+  initialSelectedCameras,
+  initialSelectedMicrophone,
   onComplete,
 }: RecordingScreenProps) => {
   const toast = useToast();
   const [showStopModal, setShowStopModal] = useState(false);
-  const [showCancelCaptureModal, setShowCancelCaptureModal] = useState(false);
+  const [showScreenEndedModal, setShowScreenEndedModal] = useState(false);
   const [hybridLayout, setHybridLayout] = useState<HybridLayout>("pip");
+  const [multiCameraLayout, setMultiCameraLayout] = useState<MultiCameraLayout>("side-by-side");
   const [activeTab, setActiveTab] = useState<"camera" | "screen">("screen");
-  const combinedHandleRef = useRef<(CombinedStreamHandle & { activeTab: "camera" | "screen" }) | null>(null);
-  const [combinedStream, setCombinedStream] = useState<MediaStream | null>(null);
-  const [cameraOnlyStream, setCameraOnlyStream] = useState<MediaStream | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [previewCameraStream, setPreviewCameraStream] = useState<MediaStream | null>(null);
+  const speechSupportWarnedRef = useRef(false);
+  const prevStatusRef = useRef<"idle" | "recording" | "paused" | "stopped">("idle");
+  const speechStartRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const speechStartedFromUserGestureRef = useRef(false);
+  const pendingStartRef = useRef(false);
 
   const isHybrid = modo === "HIBRIDO";
-  const [previewCameraStream, setPreviewCameraStream] = useState<MediaStream | null>(null);
 
+  // ── Device detection ──────────────────────────────────────────────────────
   const {
     selectedCamera,
     selectedMicrophone,
+    selectedCameras,
     cameras,
     microphones,
     isDetecting,
     error: deviceError,
-  } = useDeviceDetection();
+    toggleCamera,
+  } = useDeviceDetection(true, initialSelectedCameras, initialSelectedMicrophone);
 
+  const isMultiCamera = !isHybrid && selectedCameras.length > 1;
+
+  // ── Chunk storage ─────────────────────────────────────────────────────────
   const {
     chunkCount,
     totalBytes,
@@ -56,10 +79,56 @@ export const RecordingScreen = ({
     getAllChunks,
     clearChunks,
     createRecoveryRecord,
+    beginNewSegment,
     clearRecoveryRecord,
     error: storageError,
   } = useChunkStorage(gravacaoId);
 
+  // ── Hybrid stream (must come before useMediaRecorder) ─────────────────────
+  const onScreenEndedUnexpectedly = useCallback(() => {
+    toast.warning("Compartilhamento de tela encerrado. Escolha como deseja continuar.");
+    setShowScreenEndedModal(true);
+  }, [toast]);
+
+  const {
+    combinedStream,
+    cameraOnlyStream,
+    showCancelCaptureModal,
+    startHybrid,
+    stopHybrid,
+    setActiveTab: setHybridActiveTab,
+    handleCancelCaptureWithCameraOnly: handleCancelCaptureWithCameraOnlyRaw,
+    handleCancelCaptureAbort,
+  } = useHybridStream({
+    selectedCamera,
+    selectedMicrophone,
+    hybridLayout,
+    onScreenEndedUnexpectedly,
+    onCaptureCancel: useCallback(() => {}, []),
+  });
+
+  // Sync activeTab to hybrid handle
+  useEffect(() => {
+    setHybridActiveTab(activeTab);
+  }, [activeTab, setHybridActiveTab]);
+
+  // ── Multi-camera stream ───────────────────────────────────────────────────
+  const {
+    combinedStream: multiCameraStream,
+    start: startMultiCamera,
+    stop: stopMultiCamera,
+    setLayout: setMultiCameraCompositorLayout,
+  } = useMultiCameraStream({
+    selectedCameras,
+    selectedMicrophone,
+  });
+
+  const handleMultiCameraLayoutChange = useCallback((layout: MultiCameraLayout) => {
+    setMultiCameraLayout(layout);
+    setMultiCameraCompositorLayout(layout);
+  }, [setMultiCameraCompositorLayout]);
+
+  // ── Media recorder ────────────────────────────────────────────────────────
   const handleChunk = useCallback(
     (blob: Blob) => {
       saveChunk(blob).catch(() => {
@@ -70,25 +139,11 @@ export const RecordingScreen = ({
   );
 
   const handleRecordingError = useCallback(
-    (error: string) => {
-      toast.error(error);
-    },
+    (error: string) => { toast.error(error); },
     [toast]
   );
 
-  const onScreenEnded = useCallback(() => {
-    toast.warning("Compartilhamento de tela encerrado. A gravação continua apenas com a câmera.");
-    if (combinedHandleRef.current) {
-      combinedHandleRef.current.destroy();
-      combinedHandleRef.current = null;
-    }
-  }, [toast]);
-
-  const {
-    startCapture,
-    stopCapture,
-  } = useScreenCapture({ onStreamEnded: onScreenEnded });
-
+  const usesExternalStream = isHybrid || isMultiCamera;
   const {
     status,
     stream: recorderStream,
@@ -98,15 +153,133 @@ export const RecordingScreen = ({
     resume,
     stop,
   } = useMediaRecorder({
-    cameraId: isHybrid ? undefined : selectedCamera,
-    microphoneId: isHybrid ? undefined : selectedMicrophone,
-    externalStream: isHybrid ? combinedStream : undefined,
+    cameraId: usesExternalStream ? undefined : selectedCamera,
+    microphoneId: usesExternalStream ? undefined : selectedMicrophone,
+    externalStream: isHybrid ? combinedStream : isMultiCamera ? multiCameraStream : undefined,
     onChunk: handleChunk,
     onError: handleRecordingError,
   });
 
+  // ── Audio analyser ────────────────────────────────────────────────────────
+  const isActive = status === "recording" || status === "paused";
+  const voiceFeaturesRef = useAudioAnalyser(recorderStream, isActive);
+  const audioLevelRef = useAudioLevel(recorderStream, isActive);
+
+  // ── Speech recognition ────────────────────────────────────────────────────
+  const handleSpeechError = useCallback(
+    (message: string) => { toast.warning(message); },
+    [toast]
+  );
+
+  const {
+    isSupported: isSpeechSupported,
+    isRunning: isSpeechRunning,
+    interimText,
+    finalSegments,
+    transcriptText,
+    start: startSpeech,
+    pause: pauseSpeech,
+    resume: resumeSpeech,
+    stop: stopSpeech,
+  } = useSpeechRecognition({
+    lang: "pt-BR",
+    processMetadata: metadata,
+    getVoiceFeatures: () => voiceFeaturesRef.current,
+    onError: handleSpeechError,
+  });
+
+  // ── Live transcription sync ───────────────────────────────────────────────
+  const { flush: flushLiveTranscription } = useLiveTranscription(
+    gravacaoId,
+    finalSegments,
+    isActive
+  );
+
+  // ── Start logic ───────────────────────────────────────────────────────────
+  const stopPreviewStream = useCallback(() => {
+    setPreviewCameraStream((current) => {
+      current?.getTracks().forEach((t) => t.stop());
+      return null;
+    });
+  }, []);
+
+  const startPresencial = useCallback(async () => {
+    if (chunkCount > 0) beginNewSegment();
+    stopPreviewStream();
+    await createRecoveryRecord(metadata, modo);
+    await startRecorder();
+  }, [chunkCount, beginNewSegment, createRecoveryRecord, metadata, modo, startRecorder, stopPreviewStream]);
+
+  const startMultiCameraWrapper = useCallback(async () => {
+    if (chunkCount > 0) beginNewSegment();
+    stopPreviewStream();
+    try {
+      const stream = await startMultiCamera(multiCameraLayout);
+      if (stream) {
+        await createRecoveryRecord(metadata, modo);
+        pendingStartRef.current = true;
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Erro ao iniciar câmeras.");
+    }
+  }, [chunkCount, beginNewSegment, stopPreviewStream, startMultiCamera, createRecoveryRecord, metadata, modo, toast]);
+
+  const startHybridWrapper = useCallback(async () => {
+    if (chunkCount > 0) beginNewSegment();
+    stopPreviewStream();
+    try {
+      const stream = await startHybrid();
+      if (stream) {
+        await createRecoveryRecord(metadata, modo);
+        pendingStartRef.current = true;
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Erro ao iniciar captura híbrida.");
+    }
+  }, [chunkCount, beginNewSegment, stopPreviewStream, startHybrid, createRecoveryRecord, metadata, modo, toast]);
+
+  // Start recorder once the external stream (hybrid or multi-camera) is ready
   useEffect(() => {
-    if (isHybrid || status !== "idle" || !selectedCamera) return;
+    const externalStream = combinedStream ?? multiCameraStream;
+    if (pendingStartRef.current && externalStream && (status === "idle" || status === "stopped")) {
+      pendingStartRef.current = false;
+      startRecorder();
+    }
+  }, [combinedStream, multiCameraStream, status, startRecorder]);
+
+  const handleCancelCaptureWithCameraOnly = useCallback(async () => {
+    const stream = await handleCancelCaptureWithCameraOnlyRaw();
+    if (stream) {
+      await createRecoveryRecord(metadata, modo);
+      pendingStartRef.current = true;
+    }
+  }, [handleCancelCaptureWithCameraOnlyRaw, createRecoveryRecord, metadata, modo]);
+
+  const start = isHybrid
+    ? startHybridWrapper
+    : isMultiCamera
+      ? startMultiCameraWrapper
+      : startPresencial;
+
+  const handleScreenEndedContinueWithCamera = useCallback(async () => {
+    setShowScreenEndedModal(false);
+    if (!cameraOnlyStream) {
+      toast.error("Não foi possível continuar: stream da câmera não está disponível.");
+      return;
+    }
+    await stop();
+    beginNewSegment();
+    pendingStartRef.current = true;
+  }, [cameraOnlyStream, beginNewSegment, stop, toast]);
+
+  const handleScreenEndedStop = useCallback(() => {
+    setShowScreenEndedModal(false);
+    setShowStopModal(true);
+  }, []);
+
+  // ── Camera preview (presencial mode, idle) ────────────────────────────────
+  useEffect(() => {
+    if (isHybrid || isMultiCamera || status !== "idle" || !selectedCamera) return;
 
     let cancelled = false;
     let stream: MediaStream | null = null;
@@ -115,8 +288,17 @@ export const RecordingScreen = ({
       try {
         stream = await navigator.mediaDevices.getUserMedia({
           video: selectedCamera
-            ? { deviceId: { ideal: selectedCamera }, width: { ideal: 1280 }, height: { ideal: 720 } }
-            : { width: { ideal: 1280 }, height: { ideal: 720 } },
+            ? {
+                deviceId: { ideal: selectedCamera },
+                width: { ideal: RECORDING.RECORD_WIDTH },
+                height: { ideal: RECORDING.RECORD_HEIGHT },
+                frameRate: { ideal: RECORDING.RECORD_FPS, max: RECORDING.RECORD_FPS },
+              }
+            : {
+                width: { ideal: RECORDING.RECORD_WIDTH },
+                height: { ideal: RECORDING.RECORD_HEIGHT },
+                frameRate: { ideal: RECORDING.RECORD_FPS, max: RECORDING.RECORD_FPS },
+              },
           audio: false,
         });
         if (!cancelled) {
@@ -130,143 +312,36 @@ export const RecordingScreen = ({
     };
 
     openPreview();
-
     return () => {
       cancelled = true;
-      if (stream) {
-        stream.getTracks().forEach((t) => t.stop());
-      }
+      if (stream) stream.getTracks().forEach((t) => t.stop());
       setPreviewCameraStream(null);
     };
   }, [isHybrid, status, selectedCamera]);
 
-  useEffect(() => {
-    if (status === "recording" && previewCameraStream) {
-      previewCameraStream.getTracks().forEach((t) => t.stop());
-      setPreviewCameraStream(null);
-    }
-  }, [status, previewCameraStream]);
-
-  const previewStream = isHybrid
-    ? combinedStream
-    : recorderStream ?? previewCameraStream;
-
-  useEffect(() => {
-    if (combinedHandleRef.current) {
-      combinedHandleRef.current.setLayout(hybridLayout);
-    }
-  }, [hybridLayout]);
-
-  useEffect(() => {
-    if (combinedHandleRef.current) {
-      combinedHandleRef.current.activeTab = activeTab;
-    }
-  }, [activeTab]);
-
-  // ── Start logic ───────────────────────────────────────────────────────────
-
-  const startPresencial = useCallback(async () => {
-    await createRecoveryRecord(metadata, modo);
-    await startRecorder();
-  }, [createRecoveryRecord, metadata, modo, startRecorder]);
-
-  const startHybrid = useCallback(async () => {
-    const cameraConstraints: MediaStreamConstraints = {
-      video: selectedCamera
-        ? { deviceId: { ideal: selectedCamera }, width: { ideal: 1920 }, height: { ideal: 1080 } }
-        : { width: { ideal: 1920 }, height: { ideal: 1080 } },
-      audio: selectedMicrophone
-        ? { deviceId: { ideal: selectedMicrophone } }
-        : true,
-    };
-
-    let cameraStream: MediaStream;
-    try {
-      cameraStream = await navigator.mediaDevices.getUserMedia(cameraConstraints);
-      setCameraOnlyStream(cameraStream);
-    } catch {
-      toast.error("Não foi possível acessar câmera/microfone.");
-      return;
-    }
-
-    const screenStream = await startCapture();
-
-    if (!screenStream) {
-      setShowCancelCaptureModal(true);
-      setCameraOnlyStream(cameraStream);
-      return;
-    }
-
-    const handle = combineStreams(cameraStream, screenStream, hybridLayout);
-    combinedHandleRef.current = handle as CombinedStreamHandle & { activeTab: "camera" | "screen" };
-    setCombinedStream(handle.stream);
-
-    await createRecoveryRecord(metadata, modo);
-  }, [selectedCamera, selectedMicrophone, startCapture, hybridLayout, createRecoveryRecord, metadata, modo, toast]);
-
-  const pendingStartRef = useRef(false);
-
-  const startHybridWrapper = useCallback(async () => {
-    pendingStartRef.current = true;
-    await startHybrid();
-  }, [startHybrid]);
-
-  useEffect(() => {
-    if (pendingStartRef.current && combinedStream && status === "idle") {
-      pendingStartRef.current = false;
-      startRecorder();
-    }
-  }, [combinedStream, status, startRecorder]);
-
-  const handleCancelCaptureWithCameraOnly = useCallback(async () => {
-    setShowCancelCaptureModal(false);
-    if (cameraOnlyStream) {
-      setCombinedStream(cameraOnlyStream);
-      await createRecoveryRecord(metadata, modo);
-      pendingStartRef.current = true;
-    }
-  }, [cameraOnlyStream, createRecoveryRecord, metadata, modo]);
-
-  const handleCancelCaptureAbort = useCallback(() => {
-    setShowCancelCaptureModal(false);
-    cameraOnlyStream?.getTracks().forEach((t) => t.stop());
-    setCameraOnlyStream(null);
-  }, [cameraOnlyStream]);
-
-  const start = isHybrid ? startHybridWrapper : startPresencial;
-
   // ── Stop logic ────────────────────────────────────────────────────────────
-
-  useEffect(() => {
-    const handleBeforeUnload = () => {
-      if (status === "recording" || status === "paused") {
-        // RecoveryRecord stays as "recording"
-      }
-    };
-    window.addEventListener("beforeunload", handleBeforeUnload);
-    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
-  }, [status]);
-
-  const handleStop = useCallback(() => {
-    setShowStopModal(true);
-  }, []);
+  const handleStop = useCallback(() => setShowStopModal(true), []);
 
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const estimatedMp4Bytes = Math.round(
+    (Math.max(1, Math.floor(elapsedMs / 1000)) *
+      (RECORDING.VIDEO_BITS_PER_SECOND + RECORDING.AUDIO_BITS_PER_SECOND)) /
+      8 * 1.1
+  );
 
   const confirmStop = useCallback(async () => {
     setShowStopModal(false);
     const durationSec = Math.round(elapsedMs / 1000);
     await stop();
+    stopSpeech();
 
-    if (combinedHandleRef.current) {
-      combinedHandleRef.current.destroy();
-      combinedHandleRef.current = null;
-    }
-    stopCapture();
-    cameraOnlyStream?.getTracks().forEach((t) => t.stop());
-    setCameraOnlyStream(null);
-    setCombinedStream(null);
+    // Libera câmeras e microfones imediatamente após o fim da gravação
+    if (isHybrid) stopHybrid();
+    if (isMultiCamera) stopMultiCamera();
+
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    await flushLiveTranscription({ force: true });
 
     toast.info("Processando gravação...");
     setIsUploading(true);
@@ -280,28 +355,89 @@ export const RecordingScreen = ({
         return;
       }
 
-      const blob = consolidateChunks(chunks);
+      const segments = buildSegmentsFromChunks(chunks);
+      if (segments.length === 0) {
+        toast.error("Nenhum segmento válido encontrado para envio.");
+        setIsUploading(false);
+        return;
+      }
 
-      await uploadConsolidated(gravacaoId, blob, {
+      const uploadResult = await uploadRecoverySegments(gravacaoId, segments, {
         duracao: durationSec,
         onProgress: setUploadProgress,
       });
 
       await clearChunks();
       await clearRecoveryRecord();
+      await flushLiveTranscription({ force: true, isFinal: true });
 
       setIsUploading(false);
-      toast.success("Gravação finalizada e enviada ao servidor com sucesso.");
+      if (uploadResult.warning) {
+        toast.warning(uploadResult.warning);
+      } else {
+        toast.success("Gravação finalizada e enviada ao servidor com sucesso.");
+      }
+      if (uploadResult.encoding) {
+        const estimatedMb = (estimatedMp4Bytes / (1024 * 1024)).toFixed(1);
+        const finalMb = (uploadResult.fileSize / (1024 * 1024)).toFixed(1);
+        toast.info(`Estimado: ${estimatedMb} MB | MP4 final: ${finalMb} MB`);
+      }
       onComplete?.();
     } catch {
-      toast.error(
-        "Falha ao enviar gravação ao servidor. Os dados estão preservados localmente. Tente novamente."
-      );
+      toast.error("Falha ao enviar gravação ao servidor. Os dados estão preservados localmente. Tente novamente.");
       setIsUploading(false);
     }
-  }, [stop, elapsedMs, clearRecoveryRecord, toast, stopCapture, cameraOnlyStream, onComplete, getAllChunks, clearChunks, gravacaoId]);
+  }, [
+    stop, stopSpeech, flushLiveTranscription, elapsedMs, clearRecoveryRecord, toast,
+    isHybrid, stopHybrid, isMultiCamera, stopMultiCamera,
+    onComplete, getAllChunks, clearChunks, gravacaoId, estimatedMp4Bytes,
+  ]);
+
+  // ── Speech status transitions ─────────────────────────────────────────────
+  useEffect(() => {
+    const prevStatus = prevStatusRef.current;
+
+    if (status === "recording" && (prevStatus === "idle" || prevStatus === "stopped")) {
+      if (isSpeechSupported) {
+        const started = speechStartedFromUserGestureRef.current || startSpeech();
+        if (!started) {
+          if (speechStartRetryTimerRef.current) clearTimeout(speechStartRetryTimerRef.current);
+          speechStartRetryTimerRef.current = setTimeout(() => { startSpeech(); }, 600);
+        }
+      }
+    } else if (status === "paused" && prevStatus === "recording") {
+      pauseSpeech();
+    } else if (status === "recording" && prevStatus === "paused") {
+      resumeSpeech();
+    } else if (status === "stopped" && (prevStatus === "recording" || prevStatus === "paused")) {
+      stopSpeech();
+      speechStartedFromUserGestureRef.current = false;
+    }
+
+    prevStatusRef.current = status;
+  }, [status, isSpeechSupported, startSpeech, pauseSpeech, resumeSpeech, stopSpeech]);
+
+  useEffect(() => () => {
+    if (speechStartRetryTimerRef.current) {
+      clearTimeout(speechStartRetryTimerRef.current);
+      speechStartRetryTimerRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      // RecoveryRecord stays as "recording" — no action needed
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, []);
 
   // ── Derived state ─────────────────────────────────────────────────────────
+  const previewStream = isHybrid
+    ? combinedStream
+    : isMultiCamera
+      ? multiCameraStream ?? recorderStream
+      : recorderStream ?? previewCameraStream;
 
   const modoLabel = modo === "PRESENCIAL" ? "Presencial" : "Híbrido";
 
@@ -317,10 +453,30 @@ export const RecordingScreen = ({
   }, [isDetecting, deviceError, cameras, microphones, selectedCamera, selectedMicrophone]);
 
   const isDev = process.env.NODE_ENV === "development";
-
   const isRecording = status === "recording";
   const isPaused = status === "paused";
-  const isActive = isRecording || isPaused;
+
+  const speechStatusLabel = !isSpeechSupported
+    ? "Não suportado neste navegador"
+    : isSpeechRunning
+      ? "Capturando fala"
+      : isActive
+        ? "Aguardando reconhecimento"
+        : "Parado";
+
+  const startWithSpeechNotice = useCallback(async () => {
+    if (!isSpeechSupported && !speechSupportWarnedRef.current) {
+      speechSupportWarnedRef.current = true;
+      toast.warning("Transcrição em tempo real indisponível neste navegador. Use Chrome ou Edge.");
+    }
+    if (isSpeechSupported) {
+      speechStartedFromUserGestureRef.current = startSpeech();
+    } else {
+      speechStartedFromUserGestureRef.current = false;
+    }
+    await start();
+  }, [isSpeechSupported, toast, start, startSpeech]);
+
 
   return (
     <div className="recording-screen flex h-[calc(100vh-3.5rem)] w-full flex-col overflow-hidden bg-gradient-to-br from-[#0a0f1e] via-[#111827] to-[#0a0f1e]">
@@ -334,10 +490,9 @@ export const RecordingScreen = ({
         }`} />
       </div>
 
-      {/* Top bar - glass */}
+      {/* Top bar */}
       <header className="glass-panel relative z-10 flex items-center justify-between px-5 py-3">
         <div className="flex items-center gap-3">
-          {/* Mode badge */}
           <span className={`rounded-full px-3 py-1 text-[11px] font-semibold tracking-wide ${
             isHybrid
               ? "bg-violet-500/20 text-violet-300 ring-1 ring-violet-500/30"
@@ -345,19 +500,17 @@ export const RecordingScreen = ({
           }`}>
             {modoLabel}
           </span>
-
-          {/* Process number */}
-          <span className="text-sm font-medium text-white/90">
-            {metadata.numeroProcesso}
-          </span>
+          <span className="text-sm font-medium text-white/90">{metadata.numeroProcesso}</span>
         </div>
 
         <div className="flex items-center gap-3">
+          <AudioLevelIndicator levelRef={audioLevelRef} active={isActive} />
           <RecordingStatus
             status={status}
             elapsedMs={elapsedMs}
             chunkCount={chunkCount}
             totalBytes={totalBytes}
+            estimatedMp4Bytes={estimatedMp4Bytes}
           />
           {isDev && isActive && (
             <button
@@ -373,17 +526,14 @@ export const RecordingScreen = ({
 
       {/* Main area */}
       <div className="relative z-10 flex flex-1 overflow-hidden">
-        {/* Video area */}
         <div className="flex min-h-0 flex-1 flex-col">
-          {/* Tabs selector for hybrid tabs mode */}
+          {/* Tabs for hybrid tabs mode */}
           {isHybrid && hybridLayout === "tabs" && isActive && (
             <div className="flex gap-1 px-4 pt-3">
               <button
                 onClick={() => setActiveTab("camera")}
                 className={`rounded-t-lg px-4 py-2 text-xs font-medium transition-all ${
-                  activeTab === "camera"
-                    ? "bg-white/10 text-white shadow-sm"
-                    : "text-white/40 hover:text-white/60 hover:bg-white/5"
+                  activeTab === "camera" ? "bg-white/10 text-white shadow-sm" : "text-white/40 hover:text-white/60 hover:bg-white/5"
                 }`}
               >
                 <span className="flex items-center gap-2">
@@ -396,9 +546,7 @@ export const RecordingScreen = ({
               <button
                 onClick={() => setActiveTab("screen")}
                 className={`rounded-t-lg px-4 py-2 text-xs font-medium transition-all ${
-                  activeTab === "screen"
-                    ? "bg-white/10 text-white shadow-sm"
-                    : "text-white/40 hover:text-white/60 hover:bg-white/5"
+                  activeTab === "screen" ? "bg-white/10 text-white shadow-sm" : "text-white/40 hover:text-white/60 hover:bg-white/5"
                 }`}
               >
                 <span className="flex items-center gap-2">
@@ -411,20 +559,24 @@ export const RecordingScreen = ({
             </div>
           )}
 
-          {/* Video preview */}
           <div className="min-h-0 flex-1 p-4">
             <VideoPreview stream={previewStream} isLoading={isDetecting || (!previewStream && status === "idle" && !deviceError)} />
           </div>
 
-          {/* Controls - centered below video */}
           <div className="flex shrink-0 items-center justify-center gap-4 px-6 pb-5 pt-1">
             {isHybrid && isActive && (
               <LayoutSwitcher layout={hybridLayout} onLayoutChange={setHybridLayout} />
             )}
-
+            {isMultiCamera && isActive && (
+              <MultiCameraLayoutSwitcher
+                layout={multiCameraLayout}
+                onLayoutChange={handleMultiCameraLayoutChange}
+                cameraCount={selectedCameras.length}
+              />
+            )}
             <RecordingControls
               status={status}
-              onStart={start}
+              onStart={startWithSpeechNotice}
               onPause={pause}
               onResume={resume}
               onStop={handleStop}
@@ -432,11 +584,8 @@ export const RecordingScreen = ({
           </div>
         </div>
 
-        {/* Side panel - glass */}
-        <aside className={`sidebar-panel relative shrink-0 transition-all duration-300 ${
-          sidebarCollapsed ? "w-12" : "w-72"
-        }`}>
-          {/* Toggle button */}
+        {/* Side panel */}
+        <aside className={`sidebar-panel relative shrink-0 transition-all duration-300 ${sidebarCollapsed ? "w-12" : "w-72"}`}>
           <button
             onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
             className="absolute -left-3 top-6 z-20 flex h-6 w-6 items-center justify-center rounded-full bg-white/10 text-white/60 backdrop-blur-sm transition-all hover:bg-white/20 hover:text-white"
@@ -459,28 +608,29 @@ export const RecordingScreen = ({
                 </h3>
                 <div className="space-y-2.5">
                   <MetadataField label="N° Processo" value={metadata.numeroProcesso} />
-                  {metadata.classeProcessual && (
-                    <MetadataField label="Classe" value={metadata.classeProcessual} />
-                  )}
-                  {metadata.partes && (
-                    <MetadataField label="Partes" value={metadata.partes} />
-                  )}
-                  {metadata.vara && (
-                    <MetadataField label="Vara" value={metadata.vara} />
-                  )}
-                  {metadata.nomeJuiz && (
-                    <MetadataField label="Juiz(a)" value={metadata.nomeJuiz} />
-                  )}
-                  {metadata.tipoAudiencia && (
-                    <MetadataField label="Tipo" value={metadata.tipoAudiencia} />
-                  )}
-                  {metadata.dataAudiencia && (
-                    <MetadataField label="Data" value={metadata.dataAudiencia} />
-                  )}
+                  {metadata.classeProcessual && <MetadataField label="Classe" value={metadata.classeProcessual} />}
+                  {metadata.partes && <MetadataField label="Partes" value={metadata.partes} />}
+                  {metadata.vara && <MetadataField label="Vara" value={metadata.vara} />}
+                  {metadata.nomeJuiz && <MetadataField label="Juiz(a)" value={metadata.nomeJuiz} />}
+                  {metadata.tipoAudiencia && <MetadataField label="Tipo" value={metadata.tipoAudiencia} />}
+                  {metadata.dataAudiencia && <MetadataField label="Data" value={metadata.dataAudiencia} />}
                 </div>
               </div>
 
-              {/* Divider */}
+              {!isHybrid && cameras.length > 1 && (
+                <>
+                  <div className="my-4 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent" />
+                  <div className="mb-5">
+                    <CameraSelector
+                      cameras={cameras}
+                      selectedCameras={selectedCameras}
+                      onToggle={toggleCamera}
+                      disabled={isActive}
+                    />
+                  </div>
+                </>
+              )}
+
               <div className="my-4 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent" />
 
               {/* Devices */}
@@ -494,25 +644,52 @@ export const RecordingScreen = ({
                 </h3>
                 <div className="space-y-2">
                   <DeviceItem
-                    icon={
-                      <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="m15.75 10.5 4.72-4.72a.75.75 0 0 1 1.28.53v11.38a.75.75 0 0 1-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 0 0 2.25-2.25v-9a2.25 2.25 0 0 0-2.25-2.25h-9A2.25 2.25 0 0 0 2.25 7.5v9a2.25 2.25 0 0 0 2.25 2.25Z" />
-                      </svg>
-                    }
+                    icon={<svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="m15.75 10.5 4.72-4.72a.75.75 0 0 1 1.28.53v11.38a.75.75 0 0 1-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 0 0 2.25-2.25v-9a2.25 2.25 0 0 0-2.25-2.25h-9A2.25 2.25 0 0 0 2.25 7.5v9a2.25 2.25 0 0 0 2.25 2.25Z" /></svg>}
                     label={deviceInfo.camera}
                   />
                   <DeviceItem
-                    icon={
-                      <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 18.75a6 6 0 0 0 6-6v-1.5m-6 7.5a6 6 0 0 1-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 0 1-3-3V4.5a3 3 0 1 1 6 0v8.25a3 3 0 0 1-3 3Z" />
-                      </svg>
-                    }
+                    icon={<svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 18.75a6 6 0 0 0 6-6v-1.5m-6 7.5a6 6 0 0 1-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 0 1-3-3V4.5a3 3 0 1 1 6 0v8.25a3 3 0 0 1-3 3Z" /></svg>}
                     label={deviceInfo.mic}
                   />
                 </div>
               </div>
 
-              {/* Divider */}
+              <div className="my-4 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent" />
+
+              {/* Live transcription */}
+              <div className="mb-5">
+                <h3 className="mb-3 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-widest text-white/40">
+                  <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 18.75a6 6 0 0 0 6-6v-1.5m-6 7.5a6 6 0 0 1-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 0 1-3-3V4.5a3 3 0 1 1 6 0v8.25a3 3 0 0 1-3 3Z" />
+                  </svg>
+                  Transcrição ao vivo
+                </h3>
+                <div className="rounded-lg bg-white/5 p-3 ring-1 ring-white/10">
+                  <p className={`mb-2 text-[11px] uppercase tracking-wider ${isSpeechSupported ? "text-emerald-300/80" : "text-amber-300/80"}`}>
+                    {speechStatusLabel}
+                  </p>
+                  {finalSegments.length > 0 ? (
+                    <div className="max-h-44 space-y-2 overflow-y-auto">
+                      {finalSegments.slice(-8).map((segment) => (
+                        <p key={segment.id} className="text-xs leading-relaxed text-white/80">
+                          <span className="mr-2 rounded bg-white/10 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-cyan-200">
+                            {segment.role ?? "DESCONHECIDO"}
+                          </span>
+                          {segment.text}
+                        </p>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-xs leading-relaxed text-white/75">
+                      {transcriptText || "Nenhum trecho final reconhecido ainda."}
+                    </p>
+                  )}
+                  {interimText && (
+                    <p className="mt-2 text-xs italic leading-relaxed text-white/45">{interimText}</p>
+                  )}
+                </div>
+              </div>
+
               <div className="my-4 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent" />
 
               {/* Storage info */}
@@ -572,12 +749,8 @@ export const RecordingScreen = ({
             <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-full bg-blue-500/10">
               <div className="h-8 w-8 animate-spin rounded-full border-[3px] border-white/10 border-t-blue-400" />
             </div>
-            <p className="text-lg font-semibold text-white">
-              Enviando gravação
-            </p>
-            <p className="mt-1 text-sm text-white/50">
-              Aguarde o envio completo ao servidor
-            </p>
+            <p className="text-lg font-semibold text-white">Enviando gravação</p>
+            <p className="mt-1 text-sm text-white/50">Aguarde o envio completo ao servidor</p>
             <div className="mt-5">
               <div className="h-2 w-full overflow-hidden rounded-full bg-white/5">
                 <div
@@ -600,22 +773,32 @@ export const RecordingScreen = ({
         cancelLabel="Cancelar Gravação"
         onConfirm={handleCancelCaptureWithCameraOnly}
       >
-        <p>
-          A seleção da janela do Teams foi cancelada. Deseja continuar a
-          gravação apenas com a câmera local?
+        <p>A seleção da janela do Teams foi cancelada. Deseja continuar a gravação apenas com a câmera local?</p>
+      </Modal>
+
+      <Modal
+        open={showScreenEndedModal}
+        onClose={handleScreenEndedStop}
+        title="Compartilhamento de tela interrompido"
+        confirmLabel="Retomar com Câmera"
+        cancelLabel="Encerrar Gravação"
+        onConfirm={handleScreenEndedContinueWithCamera}
+        destructive
+      >
+        <p>O compartilhamento de tela do Teams foi encerrado durante a gravação híbrida.</p>
+        <p className="mt-2 text-text-muted">
+          Para evitar gravação degradada, a captura foi pausada automaticamente. Escolha retomar apenas com câmera local ou encerrar.
         </p>
       </Modal>
     </div>
   );
 };
 
-// ── Sub-components ────────────────────────────────────────────────────────
+// ── Sub-components ────────────────────────────────────────────────────────────
 
 const MetadataField = ({ label, value }: { label: string; value: string }) => (
   <div className="group">
-    <dt className="text-[10px] font-medium uppercase tracking-widest text-white/30">
-      {label}
-    </dt>
+    <dt className="text-[10px] font-medium uppercase tracking-widest text-white/30">{label}</dt>
     <dd className="mt-0.5 text-[13px] leading-snug text-white/80">{value}</dd>
   </div>
 );
@@ -629,9 +812,7 @@ const DeviceItem = ({ icon, label }: { icon: React.ReactNode; label: string }) =
 
 const StorageStat = ({ label, value, active }: { label: string; value: string; active?: boolean }) => (
   <div className="rounded-lg bg-white/5 px-3 py-2 text-center">
-    <p className={`text-sm font-semibold tabular-nums ${active ? "text-emerald-400" : "text-white/80"}`}>
-      {value}
-    </p>
+    <p className={`text-sm font-semibold tabular-nums ${active ? "text-emerald-400" : "text-white/80"}`}>{value}</p>
     <p className="text-[10px] uppercase tracking-wider text-white/30">{label}</p>
   </div>
 );

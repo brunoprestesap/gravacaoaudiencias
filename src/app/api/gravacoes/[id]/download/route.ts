@@ -5,8 +5,18 @@ import path from "path";
 import { getSessionOrError } from "@/lib/api-auth";
 import { prisma } from "@/lib/db";
 import { Readable } from "stream";
+import { apiError } from "@/lib/api-response";
 
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(process.cwd(), "uploads");
+const PJE_MAX_OUTPUT_SIZE_BYTES = 300 * 1024 * 1024;
+
+function getVideoHeaders(filePath: string) {
+  const ext = path.extname(filePath).toLowerCase();
+  if (ext === ".mp4") {
+    return { contentType: "video/mp4", extension: "mp4" };
+  }
+  return { contentType: "video/webm", extension: "webm" };
+}
 
 interface RouteContext {
   params: Promise<{ id: string }>;
@@ -23,43 +33,36 @@ export async function GET(req: NextRequest, context: RouteContext) {
   const gravacao = await prisma.gravacao.findUnique({ where: { id } });
 
   if (!gravacao) {
-    return NextResponse.json(
-      { error: "Gravação não encontrada." },
-      { status: 404 }
-    );
+    return apiError("Gravação não encontrada.", 404);
   }
 
   // Access control
   if (user.role === "SERVIDOR" && gravacao.userId !== user.id) {
-    return NextResponse.json({ error: "Acesso negado." }, { status: 403 });
+    return apiError("Acesso negado.", 403);
   }
   if (user.role === "JUIZ" && user.vara && gravacao.vara !== user.vara) {
-    return NextResponse.json({ error: "Acesso negado." }, { status: 403 });
+    return apiError("Acesso negado.", 403);
   }
 
   if (gravacao.status !== "FINALIZADA" || !gravacao.caminhoArquivo) {
-    return NextResponse.json(
-      { error: "Arquivo não disponível. A gravação não foi finalizada." },
-      { status: 404 }
-    );
+    return apiError("Arquivo não disponível. A gravação não foi finalizada.", 404);
   }
 
   const filePath = path.join(UPLOAD_DIR, gravacao.caminhoArquivo);
+  const { contentType, extension } = getVideoHeaders(filePath);
 
   let fileStat;
   try {
     fileStat = await stat(filePath);
   } catch {
-    return NextResponse.json(
-      { error: "Arquivo não encontrado no servidor." },
-      { status: 404 }
-    );
+    return apiError("Arquivo não encontrado no servidor.", 404);
   }
 
   const fileSize = fileStat.size;
+  const pjeApto = fileSize <= PJE_MAX_OUTPUT_SIZE_BYTES;
   const processoSlug = gravacao.numeroProcesso.replace(/[^0-9-]/g, "");
   const dataStr = gravacao.createdAt.toISOString().slice(0, 10);
-  const downloadName = `gravacao_${processoSlug}_${dataStr}.webm`;
+  const downloadName = `gravacao_${processoSlug}_${dataStr}.${extension}`;
 
   // Handle Range requests
   const rangeHeader = req.headers.get("range");
@@ -87,11 +90,12 @@ export async function GET(req: NextRequest, context: RouteContext) {
     return new NextResponse(webStream, {
       status: 206,
       headers: {
-        "Content-Type": "video/webm",
+        "Content-Type": contentType,
         "Content-Disposition": `attachment; filename="${downloadName}"`,
         "Content-Length": String(chunkSize),
         "Content-Range": `bytes ${start}-${end}/${fileSize}`,
         "Accept-Ranges": "bytes",
+        "X-Pje-Apto": String(pjeApto),
       },
     });
   }
@@ -103,10 +107,11 @@ export async function GET(req: NextRequest, context: RouteContext) {
   return new NextResponse(webStream, {
     status: 200,
     headers: {
-      "Content-Type": "video/webm",
+      "Content-Type": contentType,
       "Content-Disposition": `attachment; filename="${downloadName}"`,
       "Content-Length": String(fileSize),
       "Accept-Ranges": "bytes",
+      "X-Pje-Apto": String(pjeApto),
     },
   });
 }

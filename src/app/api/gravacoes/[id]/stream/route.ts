@@ -7,6 +7,13 @@ import { prisma } from "@/lib/db";
 import { Readable } from "stream";
 
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(process.cwd(), "uploads");
+const PJE_MAX_OUTPUT_SIZE_BYTES = 300 * 1024 * 1024;
+
+function getVideoContentType(filePath: string): string {
+  const ext = path.extname(filePath).toLowerCase();
+  if (ext === ".mp4") return "video/mp4";
+  return "video/webm";
+}
 
 interface RouteContext {
   params: Promise<{ id: string }>;
@@ -45,6 +52,7 @@ export async function GET(req: NextRequest, context: RouteContext) {
   }
 
   const filePath = path.join(UPLOAD_DIR, gravacao.caminhoArquivo);
+  const contentType = getVideoContentType(filePath);
 
   let fileStat;
   try {
@@ -57,6 +65,7 @@ export async function GET(req: NextRequest, context: RouteContext) {
   }
 
   const fileSize = fileStat.size;
+  const pjeApto = fileSize <= PJE_MAX_OUTPUT_SIZE_BYTES;
 
   // Handle Range requests (essential for video seek)
   const rangeHeader = req.headers.get("range");
@@ -84,11 +93,12 @@ export async function GET(req: NextRequest, context: RouteContext) {
     return new NextResponse(webStream, {
       status: 206,
       headers: {
-        "Content-Type": "video/webm",
+        "Content-Type": contentType,
         "Content-Disposition": "inline",
         "Content-Length": String(chunkSize),
         "Content-Range": `bytes ${start}-${end}/${fileSize}`,
         "Accept-Ranges": "bytes",
+        "X-Pje-Apto": String(pjeApto),
       },
     });
   }
@@ -100,10 +110,11 @@ export async function GET(req: NextRequest, context: RouteContext) {
   return new NextResponse(webStream, {
     status: 200,
     headers: {
-      "Content-Type": "video/webm",
+      "Content-Type": contentType,
       "Content-Disposition": "inline",
       "Content-Length": String(fileSize),
       "Accept-Ranges": "bytes",
+      "X-Pje-Apto": String(pjeApto),
     },
   });
 }

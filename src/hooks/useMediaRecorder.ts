@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { RECORDING } from "@/lib/constants";
 import type { RecordingStatus } from "@/types/recording";
 
@@ -80,8 +80,17 @@ export const useMediaRecorder = ({
         // Presencial mode: open camera + mic via getUserMedia
         const constraints: MediaStreamConstraints = {
           video: cameraId
-            ? { deviceId: { ideal: cameraId }, width: { ideal: RECORDING.RECORD_WIDTH }, height: { ideal: RECORDING.RECORD_HEIGHT } }
-            : { width: { ideal: RECORDING.RECORD_WIDTH }, height: { ideal: RECORDING.RECORD_HEIGHT } },
+            ? {
+                deviceId: { ideal: cameraId },
+                width: { ideal: RECORDING.RECORD_WIDTH },
+                height: { ideal: RECORDING.RECORD_HEIGHT },
+                frameRate: { ideal: RECORDING.RECORD_FPS, max: RECORDING.RECORD_FPS },
+              }
+            : {
+                width: { ideal: RECORDING.RECORD_WIDTH },
+                height: { ideal: RECORDING.RECORD_HEIGHT },
+                frameRate: { ideal: RECORDING.RECORD_FPS, max: RECORDING.RECORD_FPS },
+              },
           audio: microphoneId
             ? { deviceId: { ideal: microphoneId } }
             : true,
@@ -93,7 +102,11 @@ export const useMediaRecorder = ({
       streamRef.current = stream;
 
       const codec = getCodec();
-      const recorder = new MediaRecorder(stream, { mimeType: codec });
+      const recorder = new MediaRecorder(stream, {
+        mimeType: codec,
+        videoBitsPerSecond: RECORDING.VIDEO_BITS_PER_SECOND,
+        audioBitsPerSecond: RECORDING.AUDIO_BITS_PER_SECOND,
+      });
       recorderRef.current = recorder;
 
       recorder.ondataavailable = (e) => {
@@ -162,6 +175,18 @@ export const useMediaRecorder = ({
       recorder.stop();
     });
   }, [stopTimer]);
+
+  // Cleanup on unmount: garante que câmera/mic são liberados se o componente desmontar inesperadamente
+  useEffect(() => {
+    return () => {
+      if (recorderRef.current && recorderRef.current.state !== "inactive") {
+        recorderRef.current.stop();
+      }
+      if (ownsStreamRef.current) {
+        streamRef.current?.getTracks().forEach((t) => t.stop());
+      }
+    };
+  }, []);
 
   return {
     ...state,

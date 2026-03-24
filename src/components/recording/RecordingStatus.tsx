@@ -7,6 +7,7 @@ interface RecordingStatusProps {
   elapsedMs: number;
   chunkCount: number;
   totalBytes: number;
+  estimatedMp4Bytes: number;
 }
 
 const formatTime = (ms: number): string => {
@@ -52,6 +53,7 @@ export const RecordingStatus = ({
   elapsedMs,
   chunkCount,
   totalBytes,
+  estimatedMp4Bytes,
 }: RecordingStatusProps) => {
   const config = statusConfig[status];
 
@@ -83,7 +85,9 @@ export const RecordingStatus = ({
         </svg>
         <span>{chunkCount}</span>
         <span className="text-white/20">|</span>
-        <span>{formatBytes(totalBytes)}</span>
+        <span title="Tamanho local dos chunks (WebM)">{formatBytes(totalBytes)}</span>
+        <span className="text-white/20">|</span>
+        <span title="Estimativa aproximada do MP4 final">MP4 ~ {formatBytes(estimatedMp4Bytes)}</span>
       </div>
     </div>
   );

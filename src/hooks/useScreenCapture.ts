@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 interface ScreenCaptureState {
   screenStream: MediaStream | null;
@@ -61,6 +61,14 @@ export const useScreenCapture = (options?: UseScreenCaptureOptions) => {
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
     setState({ screenStream: null, isCapturing: false, error: null });
+  }, []);
+
+  // Cleanup on unmount: garante que captura de tela é liberada se o componente desmontar inesperadamente
+  useEffect(() => {
+    return () => {
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+    };
   }, []);
 
   return {

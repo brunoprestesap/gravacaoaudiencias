@@ -1,6 +1,7 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { getSessionOrError } from "@/lib/api-auth";
 import { prisma } from "@/lib/db";
+import { apiError, apiOk } from "@/lib/api-response";
 
 // GET /api/gravacoes — Listar gravações
 export async function GET(req: NextRequest) {
@@ -32,33 +33,62 @@ export async function GET(req: NextRequest) {
     where.numeroProcesso = { contains: search, mode: "insensitive" };
   }
 
-  const [gravacoes, total] = await Promise.all([
-    prisma.gravacao.findMany({
+  const baseSelect = {
+    id: true,
+    numeroProcesso: true,
+    classeProcessual: true,
+    partes: true,
+    vara: true,
+    nomeJuiz: true,
+    tipoAudiencia: true,
+    dataAudiencia: true,
+    modo: true,
+    duracao: true,
+    tamanhoArquivo: true,
+    status: true,
+    transcricaoStatus: true,
+    transcricaoTexto: true,
+    transcricaoErro: true,
+    createdAt: true,
+  } as const;
+
+  let gravacoes: Array<Record<string, unknown>> = [];
+  const total = await prisma.gravacao.count({ where });
+
+  try {
+    gravacoes = await prisma.gravacao.findMany({
       where,
       orderBy: { createdAt: "desc" },
       skip,
       take: limit,
       select: {
-        id: true,
-        numeroProcesso: true,
-        classeProcessual: true,
-        partes: true,
-        vara: true,
-        nomeJuiz: true,
-        tipoAudiencia: true,
-        dataAudiencia: true,
-        modo: true,
-        duracao: true,
-        tamanhoArquivo: true,
-        status: true,
-        createdAt: true,
-        // caminhoArquivo omitted for security
+        ...baseSelect,
+        transcricaoSegmentos: true,
       },
-    }),
-    prisma.gravacao.count({ where }),
-  ]);
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    const isUnknownSegmentsField = message.includes("Unknown field `transcricaoSegmentos`");
 
-  return NextResponse.json({ gravacoes, total, page, limit });
+    if (!isUnknownSegmentsField) {
+      throw error;
+    }
+
+    // Fallback temporário para evitar quebra enquanto o servidor dev está com Prisma Client antigo em memória.
+    const legacyRows = await prisma.gravacao.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+      skip,
+      take: limit,
+      select: baseSelect,
+    });
+    gravacoes = legacyRows.map((row) => ({
+      ...row,
+      transcricaoSegmentos: null,
+    }));
+  }
+
+  return apiOk({ gravacoes, total, page, limit });
 }
 
 // POST /api/gravacoes — Criar registro de gravação
@@ -69,10 +99,7 @@ export async function POST(req: NextRequest) {
   const user = session!.user;
 
   if (user.role !== "SERVIDOR") {
-    return NextResponse.json(
-      { error: "Apenas servidores podem criar gravações." },
-      { status: 403 }
-    );
+    return apiError("Apenas servidores podem criar gravações.", 403);
   }
 
   try {
@@ -80,10 +107,7 @@ export async function POST(req: NextRequest) {
     const { id, metadata, modo } = body;
 
     if (!metadata?.numeroProcesso || !modo) {
-      return NextResponse.json(
-        { error: "Número do processo e modo são obrigatórios." },
-        { status: 400 }
-      );
+      return apiError("Número do processo e modo são obrigatórios.", 400);
     }
 
     const gravacao = await prisma.gravacao.create({
@@ -104,12 +128,9 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    return NextResponse.json({ gravacao }, { status: 201 });
+    return apiOk({ gravacao });
   } catch (err) {
     console.error("Erro ao criar gravação:", err);
-    return NextResponse.json(
-      { error: "Erro ao criar registro de gravação." },
-      { status: 500 }
-    );
+    return apiError("Erro ao criar registro de gravação.", 500);
   }
 }

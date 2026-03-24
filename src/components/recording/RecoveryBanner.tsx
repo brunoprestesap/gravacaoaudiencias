@@ -40,8 +40,8 @@ export const RecoveryBanner = () => {
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   };
 
-  const handleRetomar = () => {
-    const gravacaoId = retomar();
+  const handleRetomar = async () => {
+    const gravacaoId = await retomar();
     if (gravacaoId) {
       router.push(`/gravacao/${gravacaoId}`);
     }

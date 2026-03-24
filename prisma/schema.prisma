@@ -38,6 +38,11 @@ model Gravacao {
   tamanhoArquivo   Int?
   caminhoArquivo   String?
   status           StatusGravacao  @default(EM_ANDAMENTO)
+  transcricaoStatus TranscricaoStatus @default(PENDENTE)
+  transcricaoTexto String?
+  transcricaoSegmentos Json?
+  transcricaoErro  String?
+  transcricaoAtualizadoEm DateTime?
   userId           String
   user             User            @relation(fields: [userId], references: [id])
   createdAt        DateTime        @default(now())
@@ -54,4 +59,11 @@ enum StatusGravacao {
   PAUSADA
   FINALIZADA
   INTERROMPIDA
+}
+
+enum TranscricaoStatus {
+  PENDENTE
+  PROCESSANDO
+  CONCLUIDA
+  ERRO
 }

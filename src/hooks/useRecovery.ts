@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { getDb } from "@/hooks/useChunkStorage";
-import { consolidateChunks, uploadConsolidated } from "@/lib/media-utils";
+import { uploadRecoverySegments } from "@/lib/upload-client";
+import { buildSegmentsFromChunks } from "@/lib/chunk-segmentation";
 import { INDEXEDDB } from "@/lib/constants";
 import type { ChunkRecord, RecoveryRecord } from "@/types/recording";
 
@@ -32,40 +33,19 @@ export const useRecovery = () => {
     isConsolidating: false,
   });
 
-  const checkForInterrupted = useCallback(async () => {
-    setState((s) => ({ ...s, isLoading: true }));
+  const syncBackendStatus = useCallback(async (gravacaoId: string, status: "INTERROMPIDA" | "EM_ANDAMENTO") => {
     try {
-      const db = await getDb();
-
-      // Get all recovery records
-      const allRecovery = (await db.getAll(INDEXEDDB.RECOVERY_STORE)) as RecoveryRecord[];
-      const interrupted = allRecovery.find((r) => r.status === "interrupted");
-
-      if (!interrupted) {
-        // Also check for "recording" status (browser crashed without marking interrupted)
-        const recording = allRecovery.find((r) => r.status === "recording");
-        if (recording) {
-          // Mark it as interrupted since the app restarted
-          await db.put(INDEXEDDB.RECOVERY_STORE, { ...recording, status: "interrupted" });
-          return checkForInterruptedInner(db, { ...recording, status: "interrupted" });
-        }
-
-        setState({
-          hasInterruptedRecording: false,
-          recoveryData: null,
-          isLoading: false,
-          isConsolidating: false,
-        });
-        return;
-      }
-
-      await checkForInterruptedInner(db, interrupted);
+      await fetch(`/api/gravacoes/${gravacaoId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+      });
     } catch {
-      setState((s) => ({ ...s, isLoading: false }));
+      // Best-effort only: local recovery remains source of truth
     }
   }, []);
 
-  const checkForInterruptedInner = async (
+  const checkForInterruptedInner = useCallback(async (
     db: Awaited<ReturnType<typeof getDb>>,
     record: RecoveryRecord
   ) => {
@@ -104,13 +84,50 @@ export const useRecovery = () => {
       isLoading: false,
       isConsolidating: false,
     });
-  };
+
+    // Keep backend state consistent with local interrupted detection.
+    await syncBackendStatus(record.gravacaoId, "INTERROMPIDA");
+  }, [syncBackendStatus]);
+
+  const checkForInterrupted = useCallback(async () => {
+    setState((s) => ({ ...s, isLoading: true }));
+    try {
+      const db = await getDb();
+
+      // Get all recovery records
+      const allRecovery = (await db.getAll(INDEXEDDB.RECOVERY_STORE)) as RecoveryRecord[];
+      const interrupted = allRecovery.find((r) => r.status === "interrupted");
+
+      if (!interrupted) {
+        // Also check for "recording" status (browser crashed without marking interrupted)
+        const recording = allRecovery.find((r) => r.status === "recording");
+        if (recording) {
+          // Mark it as interrupted since the app restarted
+          await db.put(INDEXEDDB.RECOVERY_STORE, { ...recording, status: "interrupted" });
+          return checkForInterruptedInner(db, { ...recording, status: "interrupted" });
+        }
+
+        setState({
+          hasInterruptedRecording: false,
+          recoveryData: null,
+          isLoading: false,
+          isConsolidating: false,
+        });
+        return;
+      }
+
+      await checkForInterruptedInner(db, interrupted);
+    } catch {
+      setState((s) => ({ ...s, isLoading: false }));
+    }
+  }, [checkForInterruptedInner]);
 
   // Retomar: redirect to recording screen to continue
-  const retomar = useCallback(() => {
+  const retomar = useCallback(async () => {
     if (!state.recoveryData) return null;
+    await syncBackendStatus(state.recoveryData.gravacaoId, "EM_ANDAMENTO");
     return state.recoveryData.gravacaoId;
-  }, [state.recoveryData]);
+  }, [state.recoveryData, syncBackendStatus]);
 
   // Finalizar: consolidate chunks and upload
   const finalizar = useCallback(async (): Promise<boolean> => {
@@ -131,12 +148,14 @@ export const useRecovery = () => {
         throw new Error("Nenhum chunk encontrado para consolidar.");
       }
 
-      // Consolidate
-      const blob = consolidateChunks(chunks);
+      const segments = buildSegmentsFromChunks(chunks);
+      if (segments.length === 0) {
+        throw new Error("Nenhum segmento válido encontrado para envio.");
+      }
 
       // Upload with estimated duration
       const estimatedDurationSec = chunks.length * 5;
-      await uploadConsolidated(gravacaoId, blob, {
+      await uploadRecoverySegments(gravacaoId, segments, {
         duracao: estimatedDurationSec,
       });
 

@@ -27,9 +27,12 @@ export const RecordingWizard = () => {
     microphones,
     selectedCamera,
     selectedMicrophone,
+    selectedCameras,
     isDetecting,
     error: deviceError,
     refresh: refreshDevices,
+    toggleCamera,
+    selectMicrophone,
   } = useDeviceDetection(currentStep >= 2);
 
   const hasCameras = cameras.length > 0;
@@ -86,6 +89,8 @@ export const RecordingWizard = () => {
         gravacaoId={gravacaoId}
         metadata={metadata}
         modo={modo}
+        initialSelectedCameras={selectedCameras}
+        initialSelectedMicrophone={selectedMicrophone ?? undefined}
         onComplete={handleRecordingComplete}
       />
     );
@@ -177,18 +182,109 @@ export const RecordingWizard = () => {
                 </div>
 
                 <div className="space-y-2">
-                  <DeviceStatus
-                    label="Câmera"
-                    detected={hasCameras}
-                    name={cameras.find((c) => c.deviceId === selectedCamera)?.label}
-                    loading={isDetecting}
-                  />
-                  <DeviceStatus
-                    label="Microfone"
-                    detected={hasMicrophones}
-                    name={microphones.find((m) => m.deviceId === selectedMicrophone)?.label}
-                    loading={isDetecting}
-                  />
+                  {/* Cameras — checkboxes when multiple, status when single */}
+                  {isDetecting ? (
+                    <DeviceStatus label="Câmera" detected={false} loading={true} />
+                  ) : cameras.length === 0 ? (
+                    <DeviceStatus label="Câmera" detected={false} loading={false} />
+                  ) : cameras.length === 1 ? (
+                    <DeviceStatus
+                      label="Câmera"
+                      detected={true}
+                      name={cameras[0].label}
+                      loading={false}
+                    />
+                  ) : (
+                    <div className="rounded border border-border px-3 py-2">
+                      <p className="mb-2 text-xs font-medium text-text-primary">
+                        Câmeras{" "}
+                        <span className="ml-1 text-text-muted">
+                          ({selectedCameras.length} de {cameras.length} selecionada{selectedCameras.length !== 1 ? "s" : ""})
+                        </span>
+                      </p>
+                      <div className="space-y-1.5">
+                        {cameras.map((cam, index) => {
+                          const isSelected = selectedCameras.includes(cam.deviceId);
+                          const isLast = selectedCameras.length === 1 && isSelected;
+                          return (
+                            <button
+                              key={cam.deviceId}
+                              onClick={() => toggleCamera(cam.deviceId)}
+                              disabled={isLast}
+                              title={isLast ? "Pelo menos uma câmera deve estar selecionada" : undefined}
+                              className={`flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs transition-colors ${
+                                isSelected
+                                  ? "bg-primary/8 text-text-primary"
+                                  : "text-text-muted hover:bg-bg-page hover:text-text-secondary"
+                              } ${isLast ? "cursor-not-allowed opacity-50" : "cursor-pointer"}`}
+                            >
+                              <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors ${
+                                isSelected ? "border-primary bg-primary/20" : "border-border bg-transparent"
+                              }`}>
+                                {isSelected && (
+                                  <svg className="h-2.5 w-2.5 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
+                                  </svg>
+                                )}
+                              </span>
+                              <span className="truncate">
+                                {cam.label || `Câmera ${index + 1}`}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                  {/* Microphone — radio selection when multiple, status when single */}
+                  {isDetecting ? (
+                    <DeviceStatus label="Microfone" detected={false} loading={true} />
+                  ) : microphones.length === 0 ? (
+                    <DeviceStatus label="Microfone" detected={false} loading={false} />
+                  ) : microphones.length === 1 ? (
+                    <DeviceStatus
+                      label="Microfone"
+                      detected={true}
+                      name={microphones[0].label}
+                      loading={false}
+                    />
+                  ) : (
+                    <div className="rounded border border-border px-3 py-2">
+                      <p className="mb-2 text-xs font-medium text-text-primary">
+                        Microfone{" "}
+                        <span className="ml-1 text-text-muted">
+                          (selecione o microfone a usar)
+                        </span>
+                      </p>
+                      <div className="space-y-1.5">
+                        {microphones.map((mic, index) => {
+                          const isSelected = selectedMicrophone === mic.deviceId;
+                          return (
+                            <button
+                              key={mic.deviceId}
+                              onClick={() => selectMicrophone(mic.deviceId)}
+                              className={`flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs transition-colors ${
+                                isSelected
+                                  ? "bg-primary/8 text-text-primary"
+                                  : "text-text-muted hover:bg-bg-page hover:text-text-secondary"
+                              }`}
+                            >
+                              <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border-2 transition-colors ${
+                                isSelected ? "border-primary" : "border-border"
+                              }`}>
+                                {isSelected && (
+                                  <span className="h-2 w-2 rounded-full bg-primary" />
+                                )}
+                              </span>
+                              <span className="truncate">
+                                {mic.label || `Microfone ${index + 1}`}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {deviceError && (

@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/Button";
 import { VideoPlayer } from "@/components/consultation/VideoPlayer";
 
+const PJE_MAX_OUTPUT_SIZE_BYTES = 300 * 1024 * 1024;
+
 interface Gravacao {
   id: string;
   numeroProcesso: string;
@@ -19,6 +21,21 @@ interface Gravacao {
   tamanhoArquivo: number | null;
   caminhoArquivo: string | null;
   status: "EM_ANDAMENTO" | "PAUSADA" | "FINALIZADA" | "INTERROMPIDA";
+  transcricaoStatus: "PENDENTE" | "PROCESSANDO" | "CONCLUIDA" | "ERRO";
+  transcricaoTexto: string | null;
+  transcricaoSegmentos: Array<{
+    id: string;
+    text: string;
+    role?: "JUIZ" | "PARTE" | "PROCURADOR" | "DESCONHECIDO";
+    speakerId?: string;
+    confidence?: number;
+    startMs?: number;
+    endMs?: number;
+    createdAt: string;
+    offsetMs: number;
+  }> | null;
+  transcricaoErro: string | null;
+  transcricaoAtualizadoEm: string | null;
   createdAt: string;
 }
 
@@ -73,6 +90,20 @@ const statusLabels = {
   EM_ANDAMENTO: "Em Andamento",
   PAUSADA: "Pausada",
   INTERROMPIDA: "Interrompida",
+} as const;
+
+const transcriptionStatusStyles = {
+  PENDENTE: "bg-gray-100 text-gray-700",
+  PROCESSANDO: "bg-yellow-100 text-yellow-700",
+  CONCLUIDA: "bg-green-100 text-green-700",
+  ERRO: "bg-red-100 text-red-700",
+} as const;
+
+const transcriptionStatusLabels = {
+  PENDENTE: "Pendente",
+  PROCESSANDO: "Processando",
+  CONCLUIDA: "Concluída",
+  ERRO: "Erro",
 } as const;
 
 export default function ReproducaoPage({
@@ -153,6 +184,9 @@ export default function ReproducaoPage({
   if (!gravacao) return null;
 
   const isFinalized = gravacao.status === "FINALIZADA" && gravacao.caminhoArquivo;
+  const excedeLimitePje =
+    Boolean(gravacao.tamanhoArquivo) &&
+    (gravacao.tamanhoArquivo ?? 0) > PJE_MAX_OUTPUT_SIZE_BYTES;
 
   return (
     <div className="mx-auto max-w-5xl p-6">
@@ -172,7 +206,7 @@ export default function ReproducaoPage({
         </div>
         {isFinalized && (
           <Button variant="secondary" size="sm" onClick={handleDownload}>
-            &#x2B07; Download{" "}
+            &#x2B07; Download MP4{" "}
             {gravacao.tamanhoArquivo
               ? `(${formatFileSize(gravacao.tamanhoArquivo)})`
               : ""}
@@ -209,6 +243,12 @@ export default function ReproducaoPage({
 
       {/* Metadata */}
       <div className="mt-6 rounded-lg border border-border bg-bg-card p-6 shadow-card">
+        {excedeLimitePje && (
+          <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+            Este arquivo foi salvo com mais de 300MB e pode nao ser aceito no PJe.
+            Se precisar protocolar, gere nova versao com menor qualidade.
+          </div>
+        )}
         <h2 className="mb-4 text-sm font-semibold text-text-secondary">
           Informações da Gravação
         </h2>
@@ -272,11 +312,64 @@ export default function ReproducaoPage({
         </div>
       </div>
 
+      {/* Full transcription */}
+      <div className="mt-6 rounded-lg border border-border bg-bg-card p-6 shadow-card">
+        <div className="mb-4 flex items-center gap-2">
+          <h2 className="text-sm font-semibold text-text-secondary">Transcrição</h2>
+          <span
+            className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${transcriptionStatusStyles[gravacao.transcricaoStatus]}`}
+          >
+            {transcriptionStatusLabels[gravacao.transcricaoStatus]}
+          </span>
+        </div>
+
+        {gravacao.transcricaoStatus === "CONCLUIDA" && gravacao.transcricaoSegmentos && gravacao.transcricaoSegmentos.length > 0 ? (
+          <div className="max-h-[420px] space-y-2 overflow-auto rounded border border-border bg-bg-page p-4">
+            {gravacao.transcricaoSegmentos.map((segmento) => (
+              <p key={segmento.id} className="text-sm leading-relaxed text-text-primary">
+                <span className="mr-2 inline-block rounded bg-slate-200 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-slate-700">
+                  {segmento.role ?? "DESCONHECIDO"}
+                </span>
+                {segmento.text}
+              </p>
+            ))}
+          </div>
+        ) : null}
+
+        {gravacao.transcricaoStatus === "CONCLUIDA"
+          && gravacao.transcricaoTexto
+          && (!gravacao.transcricaoSegmentos || gravacao.transcricaoSegmentos.length === 0) ? (
+          <div className="max-h-[420px] overflow-auto rounded border border-border bg-bg-page p-4">
+            <pre className="whitespace-pre-wrap text-sm text-text-primary">
+              {gravacao.transcricaoTexto}
+            </pre>
+          </div>
+        ) : null}
+
+        {gravacao.transcricaoStatus === "ERRO" ? (
+          <p className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-error">
+            {gravacao.transcricaoErro || "Falha ao processar transcrição."}
+          </p>
+        ) : null}
+
+        {gravacao.transcricaoStatus === "PROCESSANDO" ? (
+          <p className="text-sm text-text-secondary">
+            A transcrição desta gravação está em processamento.
+          </p>
+        ) : null}
+
+        {gravacao.transcricaoStatus === "PENDENTE" ? (
+          <p className="text-sm text-text-secondary">
+            Esta gravação ainda não foi transcrita.
+          </p>
+        ) : null}
+      </div>
+
       {/* Download button (large) */}
       {isFinalized && (
         <div className="mt-6 text-center">
           <Button variant="secondary" size="lg" onClick={handleDownload}>
-            &#x2B07; Download Gravação{" "}
+            &#x2B07; Download Gravação MP4{" "}
             {gravacao.tamanhoArquivo
               ? `(${formatFileSize(gravacao.tamanhoArquivo)})`
               : ""}

@@ -13,6 +13,7 @@ export interface DeviceDetectionState {
   microphones: DetectedDevice[];
   selectedCamera: string | null;
   selectedMicrophone: string | null;
+  selectedCameras: string[];
   isDetecting: boolean;
   error: string | null;
 }
@@ -23,16 +24,20 @@ const isLogitech = (label: string) =>
 const isUSBMic = (label: string) =>
   /usb|external|condenser/i.test(label) && !/logitech/i.test(label);
 
-export const useDeviceDetection = (enabled = true) => {
+export const useDeviceDetection = (enabled = true, initialSelectedCameras?: string[], initialSelectedMicrophone?: string) => {
   const [state, setState] = useState<DeviceDetectionState>({
     cameras: [],
     microphones: [],
     selectedCamera: null,
     selectedMicrophone: null,
+    selectedCameras: [],
     isDetecting: enabled,
     error: null,
   });
   const mountedRef = useRef(true);
+  const initialSelectedRef = useRef(initialSelectedCameras);
+  const initialSelectedMicRef = useRef(initialSelectedMicrophone);
+  const initialAppliedRef = useRef(false);
 
   const detectDevices = useCallback(async () => {
     setState((s) => ({ ...s, isDetecting: true, error: null }));
@@ -66,18 +71,52 @@ export const useDeviceDetection = (enabled = true) => {
         microphones[0] ??
         null;
 
+      const isFirstDetection = !initialAppliedRef.current;
+      initialAppliedRef.current = true;
+
       if (!mountedRef.current) return;
 
-      setState({
-        cameras,
-        microphones,
-        selectedCamera: preferredCamera?.deviceId ?? null,
-        selectedMicrophone: preferredMic?.deviceId ?? null,
-        isDetecting: false,
-        error:
-          cameras.length === 0 && microphones.length === 0
-            ? "Nenhum dispositivo de mídia encontrado."
-            : null,
+      setState((prev) => {
+        // On first detection: apply wizard selection (if provided) or auto-select
+        // On subsequent detections: preserve current selection, filtering out disconnected cameras
+        const selectedCameras = (() => {
+          if (isFirstDetection) {
+            const initial = initialSelectedRef.current;
+            if (initial && initial.length > 0) {
+              const valid = initial.filter((id) => cameras.some((c) => c.deviceId === id));
+              if (valid.length > 0) return valid;
+            }
+            return preferredCamera ? [preferredCamera.deviceId] : [];
+          }
+          // Preserve current selection, filter out cameras no longer connected
+          const preserved = prev.selectedCameras.filter((id) =>
+            cameras.some((c) => c.deviceId === id)
+          );
+          if (preserved.length > 0) return preserved;
+          return preferredCamera ? [preferredCamera.deviceId] : [];
+        })();
+
+        const selectedCamera = selectedCameras[0] ?? preferredCamera?.deviceId ?? null;
+        const selectedMicrophone = isFirstDetection
+          ? (() => {
+              const initial = initialSelectedMicRef.current;
+              if (initial && microphones.some((m) => m.deviceId === initial)) return initial;
+              return preferredMic?.deviceId ?? null;
+            })()
+          : prev.selectedMicrophone;
+
+        return {
+          cameras,
+          microphones,
+          selectedCamera,
+          selectedMicrophone,
+          selectedCameras,
+          isDetecting: false,
+          error:
+            cameras.length === 0 && microphones.length === 0
+              ? "Nenhum dispositivo de mídia encontrado."
+              : null,
+        };
       });
     } catch (err) {
       if (!mountedRef.current) return;
@@ -100,6 +139,22 @@ export const useDeviceDetection = (enabled = true) => {
     setState((s) => ({ ...s, selectedMicrophone: deviceId }));
   }, []);
 
+  const toggleCamera = useCallback((deviceId: string) => {
+    setState((s) => {
+      const already = s.selectedCameras.includes(deviceId);
+      const next = already
+        ? s.selectedCameras.filter((id) => id !== deviceId)
+        : [...s.selectedCameras, deviceId];
+      // Keep at least one camera selected
+      if (next.length === 0) return s;
+      return {
+        ...s,
+        selectedCameras: next,
+        selectedCamera: next[0],
+      };
+    });
+  }, []);
+
   // Listen for device connect/disconnect (only when enabled)
   useEffect(() => {
     if (!enabled) return;
@@ -120,6 +175,7 @@ export const useDeviceDetection = (enabled = true) => {
     ...state,
     selectCamera,
     selectMicrophone,
+    toggleCamera,
     refresh: detectDevices,
   };
 };

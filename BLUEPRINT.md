@@ -34,6 +34,7 @@ O Kenta DRS apresenta travamentos frequentes e erros de exceção durante grava�
 | ORM | Prisma |
 | Autenticação | NextAuth.js (credentials provider, JWT) |
 | Armazenamento de Vídeo | Filesystem do servidor local do tribunal |
+| Transcrição | whisper.cpp local + FFmpeg (sob demanda) |
 | Player de Vídeo | HTML5 `<video>` nativo |
 | Testes | Vitest + Playwright (E2E) |
 | Linting | ESLint + Prettier |
@@ -75,7 +76,7 @@ O Kenta DRS apresenta travamentos frequentes e erros de exceção durante grava�
 - Integração com API do PJe (busca automática de metadados)
 - Filtros avançados de consulta (data range, vara, juiz)
 - Logs de auditoria
-- Transcrição automática (Web Speech API)
+- Transcrição automática ao finalizar upload
 - Geração de Ata/Termo de Audiência
 - Editor rico de documentos
 - Exportação PDF/DOCX
@@ -173,6 +174,21 @@ Login ─→ Dashboard ─→ Nova Gravação (wizard 3 passos) ─→ Gravaçã
 - **Armazenamento:** Servidor local do tribunal (filesystem)
 - **Tolerância de perda:** ≤ 5 segundos por incidente
 - **Duração suportada:** 15 minutos a 2 horas contínuas
+
+## Configuração de transcrição local (`whisper.cpp`)
+
+- A transcrição é manual por item na tela `/consulta` (não roda automaticamente no upload).
+- Dependências obrigatórias no servidor:
+  - `ffmpeg` instalado e disponível no `PATH`;
+  - binário do `whisper.cpp` (ex.: `main`/`whisper-cli`);
+  - arquivo de modelo local (`ggml-*.bin`).
+- Variáveis de ambiente necessárias:
+  - `WHISPER_CPP_BIN` — caminho absoluto do executável do `whisper.cpp`;
+  - `WHISPER_MODEL_PATH` — caminho absoluto do modelo local.
+- Fluxo técnico:
+  - o backend normaliza o áudio para WAV mono 16kHz com FFmpeg;
+  - executa `whisper.cpp`;
+  - persiste status (`PENDENTE`, `PROCESSANDO`, `CONCLUIDA`, `ERRO`) e resultado da transcrição.
 
 ## Conformidade Regulatória (Aplicável ao MVP)
 
