@@ -34,7 +34,7 @@ O Kenta DRS apresenta travamentos frequentes e erros de exceção durante grava�
 | ORM | Prisma |
 | Autenticação | NextAuth.js (credentials provider, JWT) |
 | Armazenamento de Vídeo | Filesystem do servidor local do tribunal |
-| Transcrição | whisper.cpp local + FFmpeg (sob demanda) |
+| Transcrição | whisper.cpp ou Wav2Vec2 (HF) + FFmpeg (sob demanda, via `LOCAL_TRANSCRIPTION_ENGINE`) |
 | Player de Vídeo | HTML5 `<video>` nativo |
 | Testes | Vitest + Playwright (E2E) |
 | Linting | ESLint + Prettier |
@@ -175,19 +175,15 @@ Login ─→ Dashboard ─→ Nova Gravação (wizard 3 passos) ─→ Gravaçã
 - **Tolerância de perda:** ≤ 5 segundos por incidente
 - **Duração suportada:** 15 minutos a 2 horas contínuas
 
-## Configuração de transcrição local (`whisper.cpp`)
+## Configuração de transcrição local (whisper.cpp ou Wav2Vec2)
 
 - A transcrição é manual por item na tela `/consulta` (não roda automaticamente no upload).
-- Dependências obrigatórias no servidor:
-  - `ffmpeg` instalado e disponível no `PATH`;
-  - binário do `whisper.cpp` (ex.: `main`/`whisper-cli`);
-  - arquivo de modelo local (`ggml-*.bin`).
-- Variáveis de ambiente necessárias:
-  - `WHISPER_CPP_BIN` — caminho absoluto do executável do `whisper.cpp`;
-  - `WHISPER_MODEL_PATH` — caminho absoluto do modelo local.
-- Fluxo técnico:
-  - o backend normaliza o áudio para WAV mono 16kHz com FFmpeg;
-  - executa `whisper.cpp`;
+- `LOCAL_TRANSCRIPTION_ENGINE` — `whisper` (padrão) ou `wav2vec2`.
+- **Motor whisper.cpp:** dependências no servidor: `ffmpeg` no `PATH`, binário do `whisper.cpp`, modelo local (`ggml-*.bin`). Variáveis: `WHISPER_CPP_BIN`, `WHISPER_MODEL_PATH`.
+- **Motor Wav2Vec2 (Hugging Face):** `ffmpeg` no `PATH`; Python 3 com dependências em `requirements-transcription.txt` (PyTorch + Transformers); script `scripts/transcribe_wav2vec2.py`. Variáveis opcionais: `TRANSCRIPTION_PYTHON`, `TRANSCRIPTION_WAV2VEC_SCRIPT`, `HF_MODEL_ID` (padrão: `jonatasgrosman/wav2vec2-large-xlsr-53-portuguese`), `HF_HOME`.
+- Fluxo técnico comum:
+  - o backend normaliza o áudio para WAV mono 16 kHz com FFmpeg;
+  - executa o motor escolhido (`whisper.cpp` ou o script Python, que grava JSON com texto e segmentos);
   - persiste status (`PENDENTE`, `PROCESSANDO`, `CONCLUIDA`, `ERRO`) e resultado da transcrição.
 
 ## Conformidade Regulatória (Aplicável ao MVP)

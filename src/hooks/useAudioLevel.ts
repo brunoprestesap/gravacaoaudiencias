@@ -77,7 +77,9 @@ export function useAudioLevel(
         const tick = () => {
           if (cancelled || !analyserRef.current || !dataRef.current) return;
 
-          analyserRef.current.getFloatTimeDomainData(dataRef.current);
+          analyserRef.current.getFloatTimeDomainData(
+            dataRef.current as Float32Array<ArrayBuffer>
+          );
 
           let sumSq = 0;
           const len = dataRef.current.length;

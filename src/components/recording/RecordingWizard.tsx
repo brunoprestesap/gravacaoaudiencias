@@ -25,7 +25,6 @@ export const RecordingWizard = () => {
   const {
     cameras,
     microphones,
-    selectedCamera,
     selectedMicrophone,
     selectedCameras,
     isDetecting,

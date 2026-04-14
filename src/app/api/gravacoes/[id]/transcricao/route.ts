@@ -1,8 +1,9 @@
 import path from "path";
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { apiError, apiOk } from "@/lib/api-response";
 import { Prisma } from "@prisma/client";
 import { getSessionOrError } from "@/lib/api-auth";
+import { assertGravacaoAccess } from "@/lib/gravacao-access";
 import { prisma } from "@/lib/db";
 import {
   applyContextualCorrections,
@@ -43,22 +44,14 @@ interface LiveSegmentPayload {
     energyMeanDb?: number;
     pauseRatio?: number;
     speechRateApprox?: number;
+    zeroCrossingRateMean?: number;
+    crestFactorMean?: number;
+    entropyMean?: number;
+    dynamicRangeDb?: number;
+    energyStdDb?: number;
+    spectralFluxApprox?: number;
+    pitchEndLiftHz?: number;
   };
-}
-
-function canAccessGravacao(
-  user: { id: string; role: "SERVIDOR" | "JUIZ"; vara?: string | null },
-  gravacao: { userId: string; vara: string | null }
-) {
-  if (user.role === "SERVIDOR" && gravacao.userId !== user.id) {
-    return false;
-  }
-
-  if (user.role === "JUIZ" && user.vara && gravacao.vara !== user.vara) {
-    return false;
-  }
-
-  return true;
 }
 
 // GET /api/gravacoes/:id/transcricao — Status e conteúdo da transcrição
@@ -83,12 +76,15 @@ export async function GET(_req: NextRequest, context: RouteContext) {
     },
   });
 
+  const getDenied = assertGravacaoAccess(
+    user,
+    gravacao ? { userId: gravacao.userId, vara: gravacao.vara } : null,
+    "read"
+  );
+  if (getDenied) return getDenied;
+
   if (!gravacao) {
     return apiError("Gravação não encontrada.", 404);
-  }
-
-  if (!canAccessGravacao(user, gravacao)) {
-    return apiError("Acesso negado.", 403);
   }
 
   return apiOk({
@@ -128,12 +124,15 @@ export async function POST(_req: NextRequest, context: RouteContext) {
     },
   });
 
+  const postDenied = assertGravacaoAccess(
+    user,
+    gravacao ? { userId: gravacao.userId, vara: gravacao.vara } : null,
+    "read"
+  );
+  if (postDenied) return postDenied;
+
   if (!gravacao) {
     return apiError("Gravação não encontrada.", 404);
-  }
-
-  if (!canAccessGravacao(user, gravacao)) {
-    return apiError("Acesso negado.", 403);
   }
 
   if (gravacao.transcricaoStatus === "PROCESSANDO") {
@@ -153,6 +152,16 @@ export async function POST(_req: NextRequest, context: RouteContext) {
 
   const absoluteVideoPath = path.join(UPLOAD_DIR, gravacao.caminhoArquivo);
 
+  try {
+    await validateLocalTranscriptionRuntime();
+  } catch (err) {
+    const message =
+      err instanceof LocalTranscriptionError
+        ? err.message
+        : "Ambiente de transcrição não disponível.";
+    return apiError(message, 500);
+  }
+
   await prisma.gravacao.update({
     where: { id: gravacao.id },
     data: {
@@ -162,65 +171,59 @@ export async function POST(_req: NextRequest, context: RouteContext) {
     },
   });
 
-  try {
-    await validateLocalTranscriptionRuntime();
-    const result = await transcribeLocalRecording({ inputVideoPath: absoluteVideoPath });
+  const gravacaoId = gravacao.id;
+  const contextualMetadata: ProcessMetadata = {
+    numeroProcesso: gravacao.numeroProcesso,
+    classeProcessual: gravacao.classeProcessual ?? undefined,
+    partes: gravacao.partes ?? undefined,
+    vara: gravacao.vara ?? undefined,
+    nomeJuiz: gravacao.nomeJuiz ?? undefined,
+    tipoAudiencia: gravacao.tipoAudiencia ?? undefined,
+    dataAudiencia: gravacao.dataAudiencia
+      ? gravacao.dataAudiencia.toISOString().slice(0, 10)
+      : undefined,
+  };
 
-    const contextualMetadata: ProcessMetadata = {
-      numeroProcesso: gravacao.numeroProcesso,
-      classeProcessual: gravacao.classeProcessual ?? undefined,
-      partes: gravacao.partes ?? undefined,
-      vara: gravacao.vara ?? undefined,
-      nomeJuiz: gravacao.nomeJuiz ?? undefined,
-      tipoAudiencia: gravacao.tipoAudiencia ?? undefined,
-      dataAudiencia: gravacao.dataAudiencia
-        ? gravacao.dataAudiencia.toISOString().slice(0, 10)
-        : undefined,
-    };
-    const diarizedSegments = diarizeSegmentsByRole(result.segments, contextualMetadata);
+  void (async () => {
+    try {
+      const result = await transcribeLocalRecording({ inputVideoPath: absoluteVideoPath });
+      const diarizedSegments = diarizeSegmentsByRole(result.segments, contextualMetadata);
 
-    const updated = await prisma.gravacao.update({
-      where: { id: gravacao.id },
-      data: {
-        transcricaoStatus: "CONCLUIDA",
-        transcricaoTexto: result.text,
-        transcricaoSegmentos: diarizedSegments as unknown as Prisma.InputJsonValue,
-        transcricaoErro: null,
-        transcricaoAtualizadoEm: new Date(),
-      },
-      select: {
-        transcricaoStatus: true,
-        transcricaoTexto: true,
-        transcricaoSegmentos: true,
-        transcricaoErro: true,
-      },
-    });
+      await prisma.gravacao.update({
+        where: { id: gravacaoId },
+        data: {
+          transcricaoStatus: "CONCLUIDA",
+          transcricaoTexto: result.text,
+          transcricaoSegmentos: diarizedSegments as unknown as Prisma.InputJsonValue,
+          transcricaoErro: null,
+          transcricaoAtualizadoEm: new Date(),
+        },
+      });
+    } catch (err) {
+      const message =
+        err instanceof LocalTranscriptionError
+          ? err.message
+          : "Falha inesperada durante a transcrição.";
 
-    return apiOk({
-      transcricao: {
-        status: updated.transcricaoStatus,
-        texto: updated.transcricaoTexto,
-        segmentos: parseStoredSegments(updated.transcricaoSegmentos),
-        erro: updated.transcricaoErro,
-      },
-    });
-  } catch (err) {
-    const message =
-      err instanceof LocalTranscriptionError
-        ? err.message
-        : "Falha inesperada durante a transcrição.";
+      await prisma.gravacao.update({
+        where: { id: gravacaoId },
+        data: {
+          transcricaoStatus: "ERRO",
+          transcricaoErro: message,
+          transcricaoAtualizadoEm: new Date(),
+        },
+      }).catch(() => {});
+    }
+  })();
 
-    await prisma.gravacao.update({
-      where: { id: gravacao.id },
-      data: {
-        transcricaoStatus: "ERRO",
-        transcricaoErro: message,
-        transcricaoAtualizadoEm: new Date(),
-      },
-    });
-
-    return NextResponse.json({ transcricao: { status: "ERRO" }, error: message }, { status: 500 });
-  }
+  return apiOk({
+    transcricao: {
+      status: "PROCESSANDO",
+      texto: null,
+      erro: null,
+    },
+    message: "Transcrição iniciada em segundo plano. Consulte o status via GET.",
+  });
 }
 
 // PATCH /api/gravacoes/:id/transcricao — Persistir transcrição incremental em tempo real
@@ -248,12 +251,16 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
     },
   });
 
+  const patchTranscricaoDenied = assertGravacaoAccess(
+    user,
+    gravacao ? { userId: gravacao.userId, vara: gravacao.vara } : null,
+    "write",
+    "patch"
+  );
+  if (patchTranscricaoDenied) return patchTranscricaoDenied;
+
   if (!gravacao) {
     return apiError("Gravação não encontrada.", 404);
-  }
-
-  if (gravacao.userId !== user.id) {
-    return apiError("Apenas o servidor que criou a gravação pode atualizar a transcrição.", 403);
   }
 
   try {
@@ -288,6 +295,13 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
               && (candidate.voiceFeatures.energyMeanDb === undefined || typeof candidate.voiceFeatures.energyMeanDb === "number")
               && (candidate.voiceFeatures.pauseRatio === undefined || typeof candidate.voiceFeatures.pauseRatio === "number")
               && (candidate.voiceFeatures.speechRateApprox === undefined || typeof candidate.voiceFeatures.speechRateApprox === "number")
+              && (candidate.voiceFeatures.zeroCrossingRateMean === undefined || typeof candidate.voiceFeatures.zeroCrossingRateMean === "number")
+              && (candidate.voiceFeatures.crestFactorMean === undefined || typeof candidate.voiceFeatures.crestFactorMean === "number")
+              && (candidate.voiceFeatures.entropyMean === undefined || typeof candidate.voiceFeatures.entropyMean === "number")
+              && (candidate.voiceFeatures.dynamicRangeDb === undefined || typeof candidate.voiceFeatures.dynamicRangeDb === "number")
+              && (candidate.voiceFeatures.energyStdDb === undefined || typeof candidate.voiceFeatures.energyStdDb === "number")
+              && (candidate.voiceFeatures.spectralFluxApprox === undefined || typeof candidate.voiceFeatures.spectralFluxApprox === "number")
+              && (candidate.voiceFeatures.pitchEndLiftHz === undefined || typeof candidate.voiceFeatures.pitchEndLiftHz === "number")
             )
           )
         )

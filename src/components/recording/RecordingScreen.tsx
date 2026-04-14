@@ -173,6 +173,7 @@ export const RecordingScreen = ({
 
   const {
     isSupported: isSpeechSupported,
+    unsupportedReason: speechUnsupportedReason,
     isRunning: isSpeechRunning,
     interimText,
     finalSegments,
@@ -222,7 +223,17 @@ export const RecordingScreen = ({
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Erro ao iniciar câmeras.");
     }
-  }, [chunkCount, beginNewSegment, stopPreviewStream, startMultiCamera, createRecoveryRecord, metadata, modo, toast]);
+  }, [
+    chunkCount,
+    beginNewSegment,
+    stopPreviewStream,
+    startMultiCamera,
+    createRecoveryRecord,
+    metadata,
+    modo,
+    toast,
+    multiCameraLayout,
+  ]);
 
   const startHybridWrapper = useCallback(async () => {
     if (chunkCount > 0) beginNewSegment();
@@ -317,7 +328,7 @@ export const RecordingScreen = ({
       if (stream) stream.getTracks().forEach((t) => t.stop());
       setPreviewCameraStream(null);
     };
-  }, [isHybrid, status, selectedCamera]);
+  }, [isHybrid, isMultiCamera, status, selectedCamera]);
 
   // ── Stop logic ────────────────────────────────────────────────────────────
   const handleStop = useCallback(() => setShowStopModal(true), []);
@@ -457,7 +468,7 @@ export const RecordingScreen = ({
   const isPaused = status === "paused";
 
   const speechStatusLabel = !isSpeechSupported
-    ? "Não suportado neste navegador"
+    ? (speechUnsupportedReason ?? "Não suportado neste navegador")
     : isSpeechRunning
       ? "Capturando fala"
       : isActive
@@ -467,7 +478,7 @@ export const RecordingScreen = ({
   const startWithSpeechNotice = useCallback(async () => {
     if (!isSpeechSupported && !speechSupportWarnedRef.current) {
       speechSupportWarnedRef.current = true;
-      toast.warning("Transcrição em tempo real indisponível neste navegador. Use Chrome ou Edge.");
+      toast.warning(speechUnsupportedReason ?? "Transcrição em tempo real indisponível neste navegador. Use Chrome ou Edge.");
     }
     if (isSpeechSupported) {
       speechStartedFromUserGestureRef.current = startSpeech();

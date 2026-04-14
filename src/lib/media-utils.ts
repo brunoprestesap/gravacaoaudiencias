@@ -158,8 +158,6 @@ export function combineMultipleCameraStreams(
   // ── Draw + capture ───────────────────────────────────────────────────────────
   // setInterval ensures the draw loop keeps running even when the tab is hidden.
   // requestFrame() explicitly pushes each drawn frame into the MediaRecorder.
-  let intervalId: ReturnType<typeof setInterval>;
-
   function drawAndCapture() {
     if (destroyed) return;
     ctx.fillStyle = "#000";
@@ -168,7 +166,7 @@ export function combineMultipleCameraStreams(
     captureTrack.requestFrame();
   }
 
-  intervalId = setInterval(drawAndCapture, 1000 / FPS);
+  const intervalId = setInterval(drawAndCapture, 1000 / FPS);
 
   // ── setLayout: update variable + push an immediate frame into the recording ──
   const setLayout = (layout: MultiCameraLayout) => {

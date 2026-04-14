@@ -129,9 +129,11 @@ export default function ConsultaPage() {
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const fetchGravacoes = useCallback(async (searchTerm: string, pageNum: number) => {
-    setLoading(true);
-    setListError(null);
+  const fetchGravacoes = useCallback(async (searchTerm: string, pageNum: number, silent = false) => {
+    if (!silent) {
+      setLoading(true);
+      setListError(null);
+    }
     try {
       const params = new URLSearchParams();
       if (searchTerm) params.set("search", searchTerm);
@@ -144,12 +146,48 @@ export default function ConsultaPage() {
       setData(json);
       return json;
     } catch {
-      setListError("Falha ao carregar gravações. Tente novamente.");
+      if (!silent) {
+        setListError("Falha ao carregar gravações. Tente novamente.");
+      }
       return null;
     } finally {
-      setLoading(false);
+      if (!silent) {
+        setLoading(false);
+      }
     }
   }, []);
+
+  const prevProcessingIdsRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    const gravacoes = data?.gravacoes ?? [];
+    const currentlyProcessing = new Set(
+      gravacoes.filter((g) => g.transcricaoStatus === "PROCESSANDO").map((g) => g.id)
+    );
+
+    const prev = prevProcessingIdsRef.current;
+    for (const id of prev) {
+      if (!currentlyProcessing.has(id)) {
+        const g = gravacoes.find((item) => item.id === id);
+        if (g) {
+          if (g.transcricaoStatus === "CONCLUIDA") {
+            toast.success(`Transcrição concluída: ${g.numeroProcesso}`);
+          } else if (g.transcricaoStatus === "ERRO") {
+            toast.error(`Erro na transcrição: ${g.numeroProcesso}`);
+          }
+        }
+      }
+    }
+    prevProcessingIdsRef.current = currentlyProcessing;
+
+    if (currentlyProcessing.size === 0) return;
+
+    const interval = setInterval(() => {
+      void fetchGravacoes(search, page, true);
+    }, 4000);
+
+    return () => clearInterval(interval);
+  }, [data, search, page, fetchGravacoes, toast]);
 
   // Initial load
   useEffect(() => {
@@ -326,14 +364,14 @@ export default function ConsultaPage() {
             {/* Table */}
             <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[1000px] text-left text-sm table-fixed">
+                <table className="w-full min-w-[1100px] text-left text-sm table-fixed">
                   <thead>
                     <tr className="border-b border-slate-200 bg-slate-50/50">
-                      <th className="w-[25%] px-5 py-4 text-xs font-semibold uppercase tracking-wider text-slate-500">Processo</th>
-                      <th className="w-[18%] px-5 py-4 text-xs font-semibold uppercase tracking-wider text-slate-500">Data e Duração</th>
-                      <th className="w-[12%] px-5 py-4 text-xs font-semibold uppercase tracking-wider text-slate-500">Modo</th>
-                      <th className="w-[11%] px-5 py-4 text-xs font-semibold uppercase tracking-wider text-slate-500">Status</th>
-                      <th className="w-[12%] px-5 py-4 text-xs font-semibold uppercase tracking-wider text-slate-500">Transcrição</th>
+                      <th className="w-[28%] px-5 py-4 text-xs font-semibold uppercase tracking-wider text-slate-500">Processo</th>
+                      <th className="w-[16%] px-5 py-4 text-xs font-semibold uppercase tracking-wider text-slate-500">Data e Duração</th>
+                      <th className="w-[10%] px-5 py-4 text-xs font-semibold uppercase tracking-wider text-slate-500">Modo</th>
+                      <th className="w-[10%] px-5 py-4 text-xs font-semibold uppercase tracking-wider text-slate-500">Status</th>
+                      <th className="w-[14%] px-5 py-4 text-xs font-semibold uppercase tracking-wider text-slate-500">Transcrição</th>
                       <th className="w-[22%] px-5 py-4 text-xs font-semibold uppercase tracking-wider text-slate-500 text-right">Ações</th>
                     </tr>
                   </thead>
@@ -408,7 +446,7 @@ export default function ConsultaPage() {
                           </div>
                         </td>
                         <td className="px-5 py-4 align-middle text-right">
-                          <div className="flex items-center justify-end gap-2">
+                          <div className="flex items-center justify-end gap-2 flex-wrap">
                             <Button
                               size="sm"
                               variant="outline"

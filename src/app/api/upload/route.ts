@@ -4,6 +4,7 @@ import { createWriteStream } from "fs";
 import path from "path";
 import os from "os";
 import { getSessionOrError } from "@/lib/api-auth";
+import { assertGravacaoAccess } from "@/lib/gravacao-access";
 import { prisma } from "@/lib/db";
 import { PJE_MAX_OUTPUT_SIZE_BYTES } from "@/lib/upload-encoding";
 import {
@@ -119,7 +120,7 @@ async function remuxRecoverySegments(segments: File[], outputPath: string) {
 }
 
 export async function POST(req: NextRequest) {
-  const { error } = await getSessionOrError();
+  const { session, error } = await getSessionOrError();
   if (error) return error;
 
   try {
@@ -187,6 +188,14 @@ export async function POST(req: NextRequest) {
     if (!gravacao) {
       return apiError("Gravação não encontrada.", 404);
     }
+
+    const uploadDenied = assertGravacaoAccess(
+      session!.user,
+      { userId: gravacao.userId, vara: gravacao.vara },
+      "write",
+      "upload"
+    );
+    if (uploadDenied) return uploadDenied;
 
     const webmOutput = buildOutputPath(gravacao, "webm");
     const mp4Output = buildOutputPath(gravacao, "mp4");

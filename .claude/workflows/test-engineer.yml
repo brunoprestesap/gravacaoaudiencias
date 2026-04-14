@@ -1,0 +1,28 @@
+name: test-engineer
+
+triggers:
+  - pull_request
+
+steps:
+  - name: Analyze PR
+    agent: test-engineer
+    input:
+      - CLAUDE.md
+      - git.diff
+
+  - name: Generate Tests
+    agent: test-engineer
+    action: generate_tests
+
+  - name: Suggest Code Changes
+    agent: test-engineer
+    output:
+      - create_files
+      - update_files
+      - comment_on_pr
+
+  - name: Risk Analysis
+    agent: test-engineer
+    action: risk_analysis
+    output:
+      - comment_on_pr

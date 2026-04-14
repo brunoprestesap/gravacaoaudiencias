@@ -1,0 +1,35 @@
+name: AI Test Engineer
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  test-engineer:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Get git diff
+        id: diff
+        run: |
+          git fetch origin main
+          echo "DIFF<<EOF" >> $GITHUB_OUTPUT
+          git diff origin/main...HEAD >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Run Claude Code Agent
+        run: |
+          npx claude-code run test-engineer \
+            --input CLAUDE.md \
+            --input "${{ steps.diff.outputs.DIFF }}"
+
+      - name: Run tests (safety net)
+        run: |
+          npm run test:unit
+          npm run test:e2e

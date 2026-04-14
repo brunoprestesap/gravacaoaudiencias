@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
 
 interface VideoPreviewProps {
   stream: MediaStream | null;
@@ -8,13 +8,13 @@ interface VideoPreviewProps {
   isLoading?: boolean;
 }
 
+const subscribeToClient = () => () => {};
+const getClientSnapshot = () => true;
+const getServerSnapshot = () => false;
+
 export const VideoPreview = ({ stream, mirrored = false, isLoading = false }: VideoPreviewProps) => {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
+  const mounted = useSyncExternalStore(subscribeToClient, getClientSnapshot, getServerSnapshot);
 
   useEffect(() => {
     const video = videoRef.current;

@@ -3,6 +3,7 @@ import { stat } from "fs/promises";
 import { createReadStream } from "fs";
 import path from "path";
 import { getSessionOrError } from "@/lib/api-auth";
+import { assertGravacaoAccess } from "@/lib/gravacao-access";
 import { prisma } from "@/lib/db";
 import { Readable } from "stream";
 
@@ -36,13 +37,12 @@ export async function GET(req: NextRequest, context: RouteContext) {
     );
   }
 
-  // Access control
-  if (user.role === "SERVIDOR" && gravacao.userId !== user.id) {
-    return NextResponse.json({ error: "Acesso negado." }, { status: 403 });
-  }
-  if (user.role === "JUIZ" && user.vara && gravacao.vara !== user.vara) {
-    return NextResponse.json({ error: "Acesso negado." }, { status: 403 });
-  }
+  const streamDenied = assertGravacaoAccess(
+    user,
+    { userId: gravacao.userId, vara: gravacao.vara },
+    "read"
+  );
+  if (streamDenied) return streamDenied;
 
   if (gravacao.status !== "FINALIZADA" || !gravacao.caminhoArquivo) {
     return NextResponse.json(

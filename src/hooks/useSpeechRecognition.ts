@@ -79,6 +79,16 @@ export const useSpeechRecognition = ({
       (window as BrowserWithWebkitSpeech).webkitSpeechRecognition
       || (window as BrowserWithWebkitSpeech).SpeechRecognition
     );
+
+  const unsupportedReason = (() => {
+    if (typeof window === "undefined") return null;
+    if (isSupported) return null;
+    const ua = navigator.userAgent;
+    if (/Firefox/i.test(ua)) return "O Firefox não suporta transcrição em tempo real. Use o Google Chrome ou Microsoft Edge.";
+    if (/Safari/i.test(ua) && !/Chrome/i.test(ua)) return "O Safari não suporta transcrição em tempo real. Use o Google Chrome ou Microsoft Edge.";
+    return "Seu navegador não suporta transcrição em tempo real (Web Speech API). Use o Google Chrome ou Microsoft Edge.";
+  })();
+
   const [isRunning, setIsRunning] = useState(false);
   const [interimText, setInterimText] = useState("");
   const [finalSegments, setFinalSegments] = useState<SpeechSegment[]>([]);
@@ -263,6 +273,7 @@ export const useSpeechRecognition = ({
 
   return {
     isSupported,
+    unsupportedReason,
     isRunning,
     interimText,
     finalSegments,

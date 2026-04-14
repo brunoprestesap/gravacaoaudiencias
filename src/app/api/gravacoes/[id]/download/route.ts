@@ -3,6 +3,7 @@ import { stat } from "fs/promises";
 import { createReadStream } from "fs";
 import path from "path";
 import { getSessionOrError } from "@/lib/api-auth";
+import { assertGravacaoAccess } from "@/lib/gravacao-access";
 import { prisma } from "@/lib/db";
 import { Readable } from "stream";
 import { apiError } from "@/lib/api-response";
@@ -36,13 +37,12 @@ export async function GET(req: NextRequest, context: RouteContext) {
     return apiError("Gravação não encontrada.", 404);
   }
 
-  // Access control
-  if (user.role === "SERVIDOR" && gravacao.userId !== user.id) {
-    return apiError("Acesso negado.", 403);
-  }
-  if (user.role === "JUIZ" && user.vara && gravacao.vara !== user.vara) {
-    return apiError("Acesso negado.", 403);
-  }
+  const downloadDenied = assertGravacaoAccess(
+    user,
+    { userId: gravacao.userId, vara: gravacao.vara },
+    "read"
+  );
+  if (downloadDenied) return downloadDenied;
 
   if (gravacao.status !== "FINALIZADA" || !gravacao.caminhoArquivo) {
     return apiError("Arquivo não disponível. A gravação não foi finalizada.", 404);

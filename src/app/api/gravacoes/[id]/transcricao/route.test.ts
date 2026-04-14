@@ -82,7 +82,7 @@ describe("API /api/gravacoes/[id]/transcricao", () => {
     expect(json.transcricao.status).toBe("PROCESSANDO");
   });
 
-  it("POST conclui transcrição com sucesso", async () => {
+  it("POST inicia transcrição em background e retorna PROCESSANDO", async () => {
     findUniqueMock.mockResolvedValue({
       id: "gravacao-1",
       userId: "user-1",
@@ -103,24 +103,17 @@ describe("API /api/gravacoes/[id]/transcricao", () => {
         },
       ],
     });
-    updateMock
-      .mockResolvedValueOnce({})
-      .mockResolvedValueOnce({
-        transcricaoStatus: "CONCLUIDA",
-        transcricaoTexto: "texto final da audiência",
-        transcricaoErro: null,
-      });
+    updateMock.mockResolvedValue({});
 
     const res = await POST({} as never, makeContext());
     const json = await res.json();
 
     expect(res.status).toBe(200);
-    expect(json.transcricao.status).toBe("CONCLUIDA");
-    expect(Array.isArray(json.transcricao.segmentos)).toBe(true);
-    expect(transcribeMock).toHaveBeenCalled();
+    expect(json.transcricao.status).toBe("PROCESSANDO");
+    expect(json.message).toBeTruthy();
   });
 
-  it("POST marca ERRO quando transcrição falha", async () => {
+  it("POST retorna 500 quando validação do runtime falha", async () => {
     findUniqueMock.mockResolvedValue({
       id: "gravacao-1",
       userId: "user-1",
@@ -130,14 +123,12 @@ describe("API /api/gravacoes/[id]/transcricao", () => {
       transcricaoStatus: "PENDENTE",
     });
     validateRuntimeMock.mockRejectedValue(new Error("Falha no runtime"));
-    updateMock.mockResolvedValue({});
 
     const res = await POST({} as never, makeContext());
     const json = await res.json();
 
     expect(res.status).toBe(500);
-    expect(json.transcricao.status).toBe("ERRO");
-    expect(updateMock).toHaveBeenCalledTimes(2);
+    expect(json.error).toBeTruthy();
   });
 
   it("PATCH persiste segmentos diarizados em tempo real", async () => {

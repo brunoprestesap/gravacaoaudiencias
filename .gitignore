@@ -26,6 +26,9 @@
 uploads/**/*.webm
 uploads/**/*.mp4
 
+.env-transcription
+.venv-transcription/
+
 # debug
 npm-debug.log*
 yarn-debug.log*

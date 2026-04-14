@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import path from "path";
 import { unlink } from "fs/promises";
 import { getSessionOrError } from "@/lib/api-auth";
+import { assertGravacaoAccess } from "@/lib/gravacao-access";
 import { prisma } from "@/lib/db";
 import { apiError, apiOk } from "@/lib/api-response";
 
@@ -23,20 +24,14 @@ export async function GET(_req: NextRequest, context: RouteContext) {
     where: { id },
   });
 
-  if (!gravacao) {
-    return apiError("Gravação não encontrada.", 404);
-  }
+  const readDenied = assertGravacaoAccess(
+    user,
+    gravacao ? { userId: gravacao.userId, vara: gravacao.vara } : null,
+    "read"
+  );
+  if (readDenied) return readDenied;
 
-  // Access control
-  if (user.role === "SERVIDOR" && gravacao.userId !== user.id) {
-    return apiError("Acesso negado.", 403);
-  }
-
-  if (user.role === "JUIZ" && user.vara && gravacao.vara !== user.vara) {
-    return apiError("Acesso negado.", 403);
-  }
-
-  return apiOk({ gravacao });
+  return apiOk({ gravacao: gravacao as NonNullable<typeof gravacao> });
 }
 
 // PATCH /api/gravacoes/:id — Atualizar gravação
@@ -51,14 +46,13 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
     where: { id },
   });
 
-  if (!gravacao) {
-    return apiError("Gravação não encontrada.", 404);
-  }
-
-  // Only the creator (SERVIDOR) can update
-  if (gravacao.userId !== user.id) {
-    return apiError("Apenas o servidor que criou a gravação pode atualizá-la.", 403);
-  }
+  const patchDenied = assertGravacaoAccess(
+    user,
+    gravacao ? { userId: gravacao.userId, vara: gravacao.vara } : null,
+    "write",
+    "patch"
+  );
+  if (patchDenied) return patchDenied;
 
   try {
     const body = await req.json();
@@ -96,16 +90,21 @@ export async function DELETE(_req: NextRequest, context: RouteContext) {
     select: {
       id: true,
       userId: true,
+      vara: true,
       caminhoArquivo: true,
     },
   });
 
+  const deleteDenied = assertGravacaoAccess(
+    user,
+    gravacao ? { userId: gravacao.userId, vara: gravacao.vara } : null,
+    "write",
+    "delete"
+  );
+  if (deleteDenied) return deleteDenied;
+
   if (!gravacao) {
     return apiError("Gravação não encontrada.", 404);
-  }
-
-  if (gravacao.userId !== user.id) {
-    return apiError("Apenas o servidor que criou a gravação pode excluí-la.", 403);
   }
 
   try {
