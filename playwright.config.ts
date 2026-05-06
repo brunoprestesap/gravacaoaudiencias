@@ -13,10 +13,12 @@ export default defineConfig({
   testDir: "e2e",
   testMatch: /.*\.spec\.ts$/,
   testIgnore: ["**/fixtures/**", "**/support/**"],
-  fullyParallel: true,
+  // Tests share the e2e database via cleanupE2eData() in afterEach. Serial
+  // execution avoids cross-test contention (one test deleting another's seed).
+  fullyParallel: false,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
-  workers: process.env.CI ? 1 : undefined,
+  workers: 1,
   reporter: process.env.CI ? "github" : "list",
   globalSetup: require.resolve("./e2e/support/global-setup.ts"),
   globalTeardown: require.resolve("./e2e/support/global-teardown.ts"),
