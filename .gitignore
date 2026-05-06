@@ -25,6 +25,11 @@
 *.pem
 uploads/
 
+# screenshots na raiz (macOS / Windows / Linux)
+/Captura de Tela*.png
+/Screen Shot*.png
+/Screenshot*.png
+
 .env-transcription
 .venv-transcription/
 
@@ -40,6 +45,14 @@ yarn-error.log*
 
 # vercel
 .vercel
+
+# IDE / agents
+.claude/settings.local.json
+
+# playwright
+/test-results/
+/playwright-report/
+/blob-report/
 
 # typescript
 *.tsbuildinfo
