@@ -91,9 +91,20 @@ export const useMediaRecorder = ({
                 height: { ideal: RECORDING.RECORD_HEIGHT },
                 frameRate: { ideal: RECORDING.RECORD_FPS, max: RECORDING.RECORD_FPS },
               },
-          audio: microphoneId
-            ? { deviceId: { ideal: microphoneId } }
-            : true,
+          // Constraints calibradas para ASR (Google Chirp 2):
+          // - echoCancellation reduz reverberação de alto-falante de sala
+          // - autoGainControl=false preserva dinâmica entre falantes (AGC ligado
+          //   "achata" sussurros e infla pausas, induzindo o decoder a alucinar)
+          // - noiseSuppression=false: Chirp prefere áudio sem NS agressivo
+          // - channelCount=1 + sampleRate=48000 alinham com o downsample 16k do servidor
+          audio: {
+            ...(microphoneId ? { deviceId: { ideal: microphoneId } } : {}),
+            echoCancellation: true,
+            noiseSuppression: false,
+            autoGainControl: false,
+            channelCount: 1,
+            sampleRate: 48000,
+          },
         };
         stream = await navigator.mediaDevices.getUserMedia(constraints);
         ownsStreamRef.current = true;

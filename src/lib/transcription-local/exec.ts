@@ -33,3 +33,27 @@ export function execFileAsyncWithEnv(
     buildExecOptions(options.maxBuffer ?? WHISPER_MAX_BUFFER, options.env)
   );
 }
+
+export interface CapturedExecError {
+  stderr?: string;
+  stdout?: string;
+  code?: number | string;
+}
+
+export function captureExecError(err: unknown): CapturedExecError {
+  if (!err || typeof err !== "object") return {};
+  const e = err as { stderr?: unknown; stdout?: unknown; code?: unknown };
+  return {
+    stderr: typeof e.stderr === "string" ? e.stderr : undefined,
+    stdout: typeof e.stdout === "string" ? e.stdout : undefined,
+    code: typeof e.code === "number" || typeof e.code === "string" ? e.code : undefined,
+  };
+}
+
+export function logSubprocessFailure(tag: string, err: unknown) {
+  const { stderr, code } = captureExecError(err);
+  const exitInfo = code !== undefined ? ` (exit=${code})` : "";
+  const tail = stderr?.trim();
+  const detail = tail ? `\n${tail}` : "";
+  console.error(`[${tag}] subprocess falhou${exitInfo}${detail}`);
+}

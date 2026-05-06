@@ -2,7 +2,7 @@ import path from "path";
 import type { TranscriptSegment } from "@/lib/transcription-diarization";
 import { DEFAULT_HF_MODEL_ID, WHISPER_MAX_BUFFER } from "./constants";
 import { LocalTranscriptionError } from "./errors";
-import { execFileAsyncWithEnv } from "./exec";
+import { execFileAsyncWithEnv, logSubprocessFailure } from "./exec";
 
 export interface Wav2VecJsonSegment {
   text?: string;
@@ -93,7 +93,8 @@ export async function runWav2VecPython(wavPath: string, jsonOutPath: string) {
       maxBuffer: WHISPER_MAX_BUFFER,
       env,
     });
-  } catch {
+  } catch (err) {
+    logSubprocessFailure("wav2vec2", err);
     throw new LocalTranscriptionError(
       "TRANSCRIPTION_FAILED",
       "Falha ao executar a transcrição Wav2Vec2 (Python)."

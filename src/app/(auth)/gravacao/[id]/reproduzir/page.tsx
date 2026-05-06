@@ -2,13 +2,16 @@
 
 import { useState, useEffect, use } from "react";
 import { useRouter } from "next/navigation";
+import { useSession } from "next-auth/react";
 import { Button } from "@/components/ui/Button";
 import { VideoPlayer } from "@/components/consultation/VideoPlayer";
+import { TermoEditor } from "@/components/termo/TermoEditor";
 
 const PJE_MAX_OUTPUT_SIZE_BYTES = 300 * 1024 * 1024;
 
 interface Gravacao {
   id: string;
+  userId: string;
   numeroProcesso: string;
   classeProcessual: string | null;
   partes: string | null;
@@ -106,6 +109,13 @@ const transcriptionStatusLabels = {
   ERRO: "Erro",
 } as const;
 
+interface Termo {
+  status: "PENDENTE" | "PROCESSANDO" | "CONCLUIDA" | "ERRO";
+  texto: string | null;
+  tipo: string | null;
+  erro: string | null;
+}
+
 export default function ReproducaoPage({
   params,
 }: {
@@ -113,26 +123,40 @@ export default function ReproducaoPage({
 }) {
   const { id } = use(params);
   const router = useRouter();
+  const { data: session } = useSession();
   const [gravacao, setGravacao] = useState<Gravacao | null>(null);
+  const [termo, setTermo] = useState<Termo | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     async function fetchGravacao() {
       try {
-        const res = await fetch(`/api/gravacoes/${id}`);
-        if (!res.ok) {
-          if (res.status === 404) {
+        const [gravacaoRes, termoRes] = await Promise.all([
+          fetch(`/api/gravacoes/${id}`),
+          fetch(`/api/gravacoes/${id}/termo`),
+        ]);
+        if (!gravacaoRes.ok) {
+          if (gravacaoRes.status === 404) {
             setError("Gravação não encontrada.");
-          } else if (res.status === 403) {
+          } else if (gravacaoRes.status === 403) {
             setError("Você não tem acesso a esta gravação.");
           } else {
             setError("Erro ao carregar gravação.");
           }
           return;
         }
-        const json = await res.json();
+        const json = await gravacaoRes.json();
         setGravacao(json.gravacao);
+        if (termoRes.ok) {
+          const termoJson = await termoRes.json();
+          setTermo({
+            status: termoJson.termo.status,
+            texto: termoJson.termo.texto,
+            tipo: termoJson.termo.tipo,
+            erro: termoJson.termo.erro,
+          });
+        }
       } catch {
         setError("Erro ao carregar gravação.");
       } finally {
@@ -364,6 +388,23 @@ export default function ReproducaoPage({
           </p>
         ) : null}
       </div>
+
+      {/* Termo de Audiência */}
+      {gravacao.transcricaoStatus === "CONCLUIDA" && termo && (
+        <div className="mt-6 rounded-lg border border-border bg-bg-card p-6 shadow-card">
+          <TermoEditor
+            gravacaoId={gravacao.id}
+            initialStatus={termo.status}
+            initialTexto={termo.texto}
+            initialTipo={termo.tipo}
+            initialErro={termo.erro}
+            canEdit={
+              session?.user?.role === "SERVIDOR"
+              && (session?.user as { id?: string })?.id === gravacao.userId
+            }
+          />
+        </div>
+      )}
 
       {/* Download button (large) */}
       {isFinalized && (

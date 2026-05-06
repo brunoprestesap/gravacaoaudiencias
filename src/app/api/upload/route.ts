@@ -9,10 +9,13 @@ import { prisma } from "@/lib/db";
 import { PJE_MAX_OUTPUT_SIZE_BYTES } from "@/lib/upload-encoding";
 import {
   assertFfmpegAvailable,
+  assertRecordingIntegrity,
+  extractTranscriptionAudio,
   transcodeWebmToMp4Adaptive,
   type EncodingDiagnostics,
   type ConversionTimings,
 } from "@/lib/upload-ffmpeg";
+import { transcriptionAudioPathFor } from "@/lib/transcription-local/audio";
 import { apiError } from "@/lib/api-response";
 
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(process.cwd(), "uploads");
@@ -247,6 +250,56 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    // Validação rápida de integridade: detecta WebM corrompido (chunk truncado
+    // após crash do navegador, concat com header inválido, gravação só-vídeo).
+    // Falhar aqui é mais útil que ver o transcode quebrar com mensagem opaca.
+    try {
+      const integrity = await assertRecordingIntegrity(webmOutput.fullPath);
+      if (!integrity.ok) {
+        await rm(webmOutput.fullPath, { force: true });
+        console.error("[upload] integridade do WebM rejeitada", {
+          gravacaoId,
+          reason: integrity.reason,
+          durationSeconds: integrity.durationSeconds,
+          audioCodec: integrity.audioCodec,
+        });
+        const message =
+          integrity.reason === "NO_AUDIO"
+            ? "Gravação enviada não contém trilha de áudio decodificável."
+            : integrity.reason === "ZERO_DURATION"
+              ? "Gravação enviada está vazia ou foi truncada antes de finalizar."
+              : "Não foi possível ler o arquivo enviado (provavelmente corrompido).";
+        return apiError(message, 422);
+      }
+      if (!finalDuration && integrity.durationSeconds) {
+        finalDuration = Math.round(integrity.durationSeconds);
+      }
+    } catch (probeError) {
+      console.warn("[upload] probe de integridade falhou — seguindo com transcode", {
+        gravacaoId,
+        error: probeError instanceof Error ? probeError.message : String(probeError),
+      });
+    }
+
+    // Extrai WAV de transcrição em paralelo com o transcode MP4. O WAV vem do
+    // WebM original (Opus → PCM, uma só decode lossy), evitando a degradação
+    // do MP4/AAC quando a transcrição precisar do áudio. Falha aqui é tolerada:
+    // a transcrição cairá para o MP4.
+    const transcriptionWavPath = transcriptionAudioPathFor(mp4Output.fullPath);
+    const transcriptionWavPromise = extractTranscriptionAudio(
+      webmOutput.fullPath,
+      transcriptionWavPath
+    ).then(
+      () => true,
+      (err) => {
+        console.warn("[upload] extração de WAV de transcrição falhou", {
+          gravacaoId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        return false;
+      }
+    );
+
     try {
       const transcodeResult = await transcodeWebmToMp4Adaptive(
         webmOutput.fullPath,
@@ -261,6 +314,7 @@ export async function POST(req: NextRequest) {
       if (!finalDuration) {
         finalDuration = transcodeResult.durationSeconds;
       }
+      const transcriptionWavReady = await transcriptionWavPromise;
       uploadDebugLog("[upload] mp4 transcode success", {
         gravacaoId,
         outputPath: mp4Output.fullPath,
@@ -268,6 +322,7 @@ export async function POST(req: NextRequest) {
         exceededPjeLimit,
         diagnostics,
         timings: conversionTimings,
+        transcriptionWavReady,
       });
     } catch (transcodeError) {
       console.error("[upload] mp4 transcode failed", {
@@ -281,6 +336,10 @@ export async function POST(req: NextRequest) {
       }
       return apiError("Falha ao converter gravação para MP4.", 500);
     } finally {
+      // Aguarda a extração WAV antes de remover o WebM (evita race onde rm
+      // mata o input do ffmpeg em execução). Se transcode falhou, ainda
+      // mantemos o WAV — facilita reprocessamento manual da transcrição.
+      await transcriptionWavPromise.catch(() => false);
       await rm(webmOutput.fullPath, { force: true });
     }
 

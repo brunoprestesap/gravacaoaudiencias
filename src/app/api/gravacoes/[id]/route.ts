@@ -5,6 +5,7 @@ import { getSessionOrError } from "@/lib/api-auth";
 import { assertGravacaoAccess } from "@/lib/gravacao-access";
 import { prisma } from "@/lib/db";
 import { apiError, apiOk } from "@/lib/api-response";
+import { transcriptionAudioPathFor } from "@/lib/transcription-local/audio";
 
 interface RouteContext {
   params: Promise<{ id: string }>;
@@ -116,6 +117,12 @@ export async function DELETE(_req: NextRequest, context: RouteContext) {
         await unlink(absolutePath);
       } catch {
         // Arquivo pode não existir mais; não bloqueia exclusão do registro
+      }
+      // Limpa também o WAV pré-extraído de transcrição (sibling), se existir.
+      try {
+        await unlink(transcriptionAudioPathFor(absolutePath));
+      } catch {
+        // Sibling pode não existir (gravação antiga ou extração que falhou).
       }
     }
 

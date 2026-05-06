@@ -65,7 +65,7 @@ describe("API /api/gravacoes/[id]/transcricao", () => {
     expect(res.status).toBe(403);
   });
 
-  it("POST retorna estado atual quando já está processando", async () => {
+  it("POST retorna estado atual quando já está processando (não stale)", async () => {
     findUniqueMock.mockResolvedValue({
       id: "gravacao-1",
       userId: "user-1",
@@ -73,6 +73,7 @@ describe("API /api/gravacoes/[id]/transcricao", () => {
       status: "FINALIZADA",
       caminhoArquivo: "2026/03/vara/a.mp4",
       transcricaoStatus: "PROCESSANDO",
+      transcricaoAtualizadoEm: new Date(),
     });
 
     const res = await POST({} as never, makeContext());
@@ -80,6 +81,31 @@ describe("API /api/gravacoes/[id]/transcricao", () => {
 
     expect(res.status).toBe(200);
     expect(json.transcricao.status).toBe("PROCESSANDO");
+    expect(json.message).toContain("já está em processamento");
+  });
+
+  it("POST permite retry quando PROCESSANDO está stale (>30min)", async () => {
+    const stale = new Date(Date.now() - 31 * 60 * 1000);
+    findUniqueMock.mockResolvedValue({
+      id: "gravacao-1",
+      userId: "user-1",
+      vara: "1a Vara",
+      status: "FINALIZADA",
+      caminhoArquivo: "2026/03/vara/a.mp4",
+      transcricaoStatus: "PROCESSANDO",
+      transcricaoAtualizadoEm: stale,
+    });
+    validateRuntimeMock.mockResolvedValue(undefined);
+    transcribeMock.mockResolvedValue({ text: "ok", segments: [] });
+    updateMock.mockResolvedValue({});
+
+    const res = await POST({} as never, makeContext());
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.transcricao.status).toBe("PROCESSANDO");
+    expect(json.message).toContain("Transcrição iniciada");
+    expect(updateMock).toHaveBeenCalled();
   });
 
   it("POST inicia transcrição em background e retorna PROCESSANDO", async () => {

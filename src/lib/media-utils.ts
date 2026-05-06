@@ -1,5 +1,5 @@
 import type { HybridLayout, MultiCameraLayout } from "@/types/recording";
-import { RECORDING, HYBRID_CANVAS, MULTI_CAMERA_CANVAS } from "@/lib/constants";
+import { RECORDING, HYBRID_AUDIO, HYBRID_CANVAS, MULTI_CAMERA_CANVAS } from "@/lib/constants";
 
 // ─── Multi-Camera Stream Combiner ────────────────────────────────────────────
 
@@ -336,6 +336,10 @@ export function combineStreams(
   rafId = requestAnimationFrame(draw);
 
   // ── Audio mixing ──────────────────────────────────────────────────────────
+  // Câmera (mic) tem ganho 1.0; tela é atenuada para HYBRID_AUDIO.SCREEN_GAIN
+  // (~0.35) para evitar que áudio de apresentação/sistema afogue a fala
+  // captada pelo microfone — perda recorrente quando se transcreve áudio
+  // misturado sem balanceamento. Mic é o que importa para o ASR (Chirp 2).
   const audioCtx = new AudioContext();
   const destination = audioCtx.createMediaStreamDestination();
 
@@ -343,14 +347,18 @@ export function combineStreams(
   if (cameraAudioTracks.length > 0) {
     const cameraAudioStream = new MediaStream(cameraAudioTracks);
     const cameraSource = audioCtx.createMediaStreamSource(cameraAudioStream);
-    cameraSource.connect(destination);
+    const cameraGain = audioCtx.createGain();
+    cameraGain.gain.value = HYBRID_AUDIO.MIC_GAIN;
+    cameraSource.connect(cameraGain).connect(destination);
   }
 
   const screenAudioTracks = screenStream.getAudioTracks();
   if (screenAudioTracks.length > 0) {
     const screenAudioStream = new MediaStream(screenAudioTracks);
     const screenSource = audioCtx.createMediaStreamSource(screenAudioStream);
-    screenSource.connect(destination);
+    const screenGain = audioCtx.createGain();
+    screenGain.gain.value = HYBRID_AUDIO.SCREEN_GAIN;
+    screenSource.connect(screenGain).connect(destination);
   }
 
   // ── Combined stream ───────────────────────────────────────────────────────

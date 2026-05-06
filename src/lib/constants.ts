@@ -61,6 +61,15 @@ export const HYBRID_CANVAS = {
   DIVIDER_WIDTH: 4,
 } as const;
 
+// Ganhos do mixer de áudio em modo híbrido (câmera/mic + screen capture).
+// Mic com ganho 1.0 — é a fonte principal para a transcrição (Chirp 2).
+// Screen com ganho 0.35 — atenua áudio de apresentação/sistema o bastante
+// para não afogar a fala do mic, mas mantém presença audível na gravação.
+export const HYBRID_AUDIO = {
+  MIC_GAIN: 1.0,
+  SCREEN_GAIN: 0.35,
+} as const;
+
 export const AUDIO_ANALYSER = {
   FFT_SIZE: 2048,
   SMOOTHING: 0.75,

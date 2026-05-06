@@ -86,6 +86,50 @@ export async function assertFfmpegAvailable() {
   await ffmpegAvailabilityPromise;
 }
 
+/**
+ * Probe rápido para detectar WebM corrompido / chunks remontados que perderam
+ * trilha de áudio ou ficaram com duração zero. Acontece quando o browser
+ * crash mid-record ou a concatenação de chunks emendou um chunk truncado.
+ * Falhar cedo aqui dá uma 422 clara em vez de cascatar em "transcode failed".
+ */
+export interface RecordingIntegrityResult {
+  ok: boolean;
+  reason: "OK" | "PROBE_FAILED" | "NO_AUDIO" | "ZERO_DURATION";
+  durationSeconds: number | null;
+  audioCodec: string | null;
+}
+
+export async function assertRecordingIntegrity(
+  inputPath: string
+): Promise<RecordingIntegrityResult> {
+  const probe = await probeMediaInfo(inputPath);
+  if (!probe.audioCodec && probe.durationSeconds == null) {
+    return { ok: false, reason: "PROBE_FAILED", durationSeconds: null, audioCodec: null };
+  }
+  if (!probe.audioCodec) {
+    return {
+      ok: false,
+      reason: "NO_AUDIO",
+      durationSeconds: probe.durationSeconds,
+      audioCodec: null,
+    };
+  }
+  if (!probe.durationSeconds || probe.durationSeconds <= 0) {
+    return {
+      ok: false,
+      reason: "ZERO_DURATION",
+      durationSeconds: probe.durationSeconds,
+      audioCodec: probe.audioCodec,
+    };
+  }
+  return {
+    ok: true,
+    reason: "OK",
+    durationSeconds: probe.durationSeconds,
+    audioCodec: probe.audioCodec,
+  };
+}
+
 export async function probeMediaInfo(inputPath: string): Promise<MediaProbeInfo> {
   try {
     const { stdout } = await execFileWithOutput("ffprobe", [
@@ -144,6 +188,31 @@ export async function tryRemuxToMp4(inputPath: string, outputPath: string): Prom
   } catch {
     return false;
   }
+}
+
+/**
+ * Extrai um WAV mono 16kHz PCM do WebM original (Opus → PCM, uma só decode).
+ * Esse arquivo é a fonte preferida da transcrição (Chirp 2): evita a 2ª
+ * compressão lossy do MP4/AAC, que degrada a qualidade espectral entregue
+ * ao modelo. Falha aqui não bloqueia upload — a transcrição cai para o MP4.
+ */
+export async function extractTranscriptionAudio(
+  webmPath: string,
+  wavPath: string
+): Promise<void> {
+  await execFileAsync("ffmpeg", [
+    "-y",
+    "-i",
+    webmPath,
+    "-vn",
+    "-ac",
+    "1",
+    "-ar",
+    "16000",
+    "-c:a",
+    "pcm_s16le",
+    wavPath,
+  ]);
 }
 
 export async function transcodeWebmToMp4Adaptive(

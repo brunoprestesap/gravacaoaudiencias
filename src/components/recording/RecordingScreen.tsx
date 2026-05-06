@@ -486,7 +486,7 @@ export const RecordingScreen = ({
       speechStartedFromUserGestureRef.current = false;
     }
     await start();
-  }, [isSpeechSupported, toast, start, startSpeech]);
+  }, [isSpeechSupported, speechUnsupportedReason, toast, start, startSpeech]);
 
 
   return (

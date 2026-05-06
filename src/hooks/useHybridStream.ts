@@ -67,9 +67,16 @@ export function useHybridStream({
             height: { ideal: RECORDING.RECORD_HEIGHT },
             frameRate: { ideal: RECORDING.RECORD_FPS, max: RECORDING.RECORD_FPS },
           },
-      audio: selectedMicrophone
-        ? { deviceId: { ideal: selectedMicrophone } }
-        : true,
+      // Vide useMediaRecorder.ts: AGC desligado é crítico para ASR robusto;
+      // mantemos echoCancellation pra atenuar reverberação de sala.
+      audio: {
+        ...(selectedMicrophone ? { deviceId: { ideal: selectedMicrophone } } : {}),
+        echoCancellation: true,
+        noiseSuppression: false,
+        autoGainControl: false,
+        channelCount: 1,
+        sampleRate: 48000,
+      },
     };
 
     let cameraStream: MediaStream;

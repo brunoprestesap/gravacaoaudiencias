@@ -1,10 +1,20 @@
-# Dependências Python para transcrição em lote com Wav2Vec2 (HF).
+# Dependências Python para transcrição em lote (Wav2Vec2 e Whisper PEFT, ambos HF).
 # Instalação sugerida (venv):
 #   python3 -m venv .venv-transcription && source .venv-transcription/bin/activate
 #   pip install -r requirements-transcription.txt
 #
 # GPU (CUDA): instale o wheel de torch adequado à sua plataforma — veja https://pytorch.org/
+# `peft` e `accelerate` são exigidos apenas pelo motor `legal-whisper`
+# (rhaymison/transcription-portuguese-legal-whisper-peft).
+# `bitsandbytes` é exigido apenas para LEGAL_WHISPER_QUANT=8bit em GPU CUDA;
+# em CPU é ignorado e pode falhar na instalação — neste caso, mantenha-o
+# comentado e o script cai automaticamente para fp16/fp32.
+# `silero-vad` é exigido apenas para TRANSCRIPTION_USE_VAD=1.
 
 numpy>=1.24.0,<3
 torch>=2.2.0,<3
 transformers>=4.38.0,<5
+peft>=0.10.0,<1
+accelerate>=0.27.0,<2
+silero-vad>=5.1.0
+# bitsandbytes>=0.43.0 ; sys_platform != "darwin"  # GPU CUDA only — descomente em produção

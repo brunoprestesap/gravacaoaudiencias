@@ -59,7 +59,15 @@ export function useMultiCameraStream({
     try {
       micStream = await navigator.mediaDevices.getUserMedia({
         video: false,
-        audio: selectedMicrophone ? { deviceId: { ideal: selectedMicrophone } } : true,
+        // Mesmas constraints de useMediaRecorder.ts: AGC desligado para ASR.
+        audio: {
+          ...(selectedMicrophone ? { deviceId: { ideal: selectedMicrophone } } : {}),
+          echoCancellation: true,
+          noiseSuppression: false,
+          autoGainControl: false,
+          channelCount: 1,
+          sampleRate: 48000,
+        },
       });
     } catch {
       // Proceed without audio — user will be warned separately if needed

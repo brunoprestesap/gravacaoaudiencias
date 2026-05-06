@@ -43,6 +43,12 @@ model Gravacao {
   transcricaoSegmentos Json?
   transcricaoErro  String?
   transcricaoAtualizadoEm DateTime?
+  termoStatus       TermoStatus @default(PENDENTE)
+  termoTexto        String?
+  termoEstruturado  Json?
+  termoTipo         String?
+  termoErro         String?
+  termoAtualizadoEm DateTime?
   userId           String
   user             User            @relation(fields: [userId], references: [id])
   createdAt        DateTime        @default(now())
@@ -62,6 +68,13 @@ enum StatusGravacao {
 }
 
 enum TranscricaoStatus {
+  PENDENTE
+  PROCESSANDO
+  CONCLUIDA
+  ERRO
+}
+
+enum TermoStatus {
   PENDENTE
   PROCESSANDO
   CONCLUIDA

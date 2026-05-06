@@ -23,8 +23,7 @@
 # misc
 .DS_Store
 *.pem
-uploads/**/*.webm
-uploads/**/*.mp4
+uploads/
 
 .env-transcription
 .venv-transcription/

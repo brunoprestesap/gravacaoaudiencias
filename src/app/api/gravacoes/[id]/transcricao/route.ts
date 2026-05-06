@@ -20,6 +20,7 @@ import {
   transcribeLocalRecording,
   validateLocalTranscriptionRuntime,
 } from "@/lib/transcription-local";
+import { isStaleProcessando } from "@/lib/transcricao-recovery";
 import type { ProcessMetadata } from "@/types/recording";
 
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(process.cwd(), "uploads");
@@ -115,6 +116,7 @@ export async function POST(_req: NextRequest, context: RouteContext) {
       status: true,
       caminhoArquivo: true,
       transcricaoStatus: true,
+      transcricaoAtualizadoEm: true,
       numeroProcesso: true,
       classeProcessual: true,
       partes: true,
@@ -135,7 +137,10 @@ export async function POST(_req: NextRequest, context: RouteContext) {
     return apiError("Gravação não encontrada.", 404);
   }
 
-  if (gravacao.transcricaoStatus === "PROCESSANDO") {
+  if (
+    gravacao.transcricaoStatus === "PROCESSANDO" &&
+    !isStaleProcessando(gravacao.transcricaoAtualizadoEm)
+  ) {
     return apiOk({
       transcricao: {
         status: gravacao.transcricaoStatus,
@@ -186,7 +191,10 @@ export async function POST(_req: NextRequest, context: RouteContext) {
 
   void (async () => {
     try {
-      const result = await transcribeLocalRecording({ inputVideoPath: absoluteVideoPath });
+      const result = await transcribeLocalRecording({
+        inputVideoPath: absoluteVideoPath,
+        metadata: contextualMetadata,
+      });
       const diarizedSegments = diarizeSegmentsByRole(result.segments, contextualMetadata);
 
       await prisma.gravacao.update({
@@ -200,6 +208,7 @@ export async function POST(_req: NextRequest, context: RouteContext) {
         },
       });
     } catch (err) {
+      console.error(`[transcricao] gravacao=${gravacaoId} falhou:`, err);
       const message =
         err instanceof LocalTranscriptionError
           ? err.message
@@ -212,7 +221,12 @@ export async function POST(_req: NextRequest, context: RouteContext) {
           transcricaoErro: message,
           transcricaoAtualizadoEm: new Date(),
         },
-      }).catch(() => {});
+      }).catch((dbErr) => {
+        console.error(
+          `[transcricao] falha ao gravar status ERRO para ${gravacaoId}:`,
+          dbErr
+        );
+      });
     }
   })();
 

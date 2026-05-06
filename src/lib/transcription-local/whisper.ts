@@ -1,6 +1,6 @@
 import type { TranscriptSegment } from "@/lib/transcription-diarization";
 import { LocalTranscriptionError } from "./errors";
-import { execFileAsync } from "./exec";
+import { execFileAsync, logSubprocessFailure } from "./exec";
 
 interface WhisperConfig {
   whisperBin: string;
@@ -21,6 +21,10 @@ export function getWhisperConfig(): WhisperConfig {
   return { whisperBin, whisperModelPath };
 }
 
+export function getWhisperInitialPrompt(): string {
+  return process.env.WHISPER_INITIAL_PROMPT?.trim() ?? "";
+}
+
 export async function runWhisperCpp(
   whisperBin: string,
   whisperModelPath: string,
@@ -28,20 +32,36 @@ export async function runWhisperCpp(
   outputBasePath: string,
   language: string
 ) {
+  const args = [
+    "-m",
+    whisperModelPath,
+    "-f",
+    wavPath,
+    "-l",
+    language,
+    // --max-context 0: desabilita conditioning no texto anterior. Principal
+    // defesa contra o hallucination loop do whisper-large-v3 em silêncios.
+    "--max-context",
+    "0",
+    // --suppress-nst: suprime tokens não-fala (música, aplausos, ruídos).
+    // Reduz hallucinations comuns como "[música]", "(applause)" etc., que o
+    // modelo às vezes injeta em trechos sem fala clara.
+    "--suppress-nst",
+    "-ovtt",
+    "-otxt",
+    "-of",
+    outputBasePath,
+  ];
+
+  const initialPrompt = getWhisperInitialPrompt();
+  if (initialPrompt) {
+    args.push("--prompt", initialPrompt);
+  }
+
   try {
-    await execFileAsync(whisperBin, [
-      "-m",
-      whisperModelPath,
-      "-f",
-      wavPath,
-      "-l",
-      language,
-      "-ovtt",
-      "-otxt",
-      "-of",
-      outputBasePath,
-    ]);
-  } catch {
+    await execFileAsync(whisperBin, args);
+  } catch (err) {
+    logSubprocessFailure("whisper.cpp", err);
     throw new LocalTranscriptionError(
       "TRANSCRIPTION_FAILED",
       "Falha ao executar whisper.cpp para transcrição."

@@ -71,10 +71,6 @@ const toPartyTokens = (partes?: string) => (
     .filter((item) => item.length >= 3)
 );
 
-const normalizedContainsAny = (text: string, terms: string[]) => (
-  terms.some((term) => text.includes(term))
-);
-
 const judgeCommandPatterns: RegExp[] = [
   /\bcom a palavra\b/,
   /\bpasso a palavra\b/,
@@ -104,6 +100,24 @@ const judgeCommandPatterns: RegExp[] = [
   /\bô[, ]?\s*doutor\b/,
   /\bse o senhor quiser\b.*\b(permanecer|ficar|de mascara)\b/,
   /\bo[, ]?\s*doutor\b.*\bfica a vontade\b/,
+];
+
+/**
+ * Interrogativas formais — padrão de pergunta dirigida pelo juiz.
+ * Diferente de `judgeCommandPatterns` (que pega comandos / atos do juiz),
+ * estes pegam perguntas que o juiz costuma fazer em instrução.
+ *
+ * Cobertos:
+ *   - tratamento formal "o senhor / a senhora ... ?"
+ *   - perguntas iniciadas por interrogativos (como, quanto, qual, onde, ...)
+ *   - referência institucional ("o INSS", "Dr. X falou", etc.) seguida de "?"
+ */
+const judgeQuestionPatterns: RegExp[] = [
+  /\b(?:o|a)\s+senhor[a]?\b[^?]*\?/,
+  /^(?:como|qual|quais|quem|quanto|quanta|quantos|quantas|onde|quando|porque|por\s+que)\b[^?]*\?/i,
+  /\b(?:o\s+senhor|a\s+senhora)\s+(?:tem|está|estava|fez|trabalha|trabalhava|conheceu|recebeu|adoeceu|teve|mora|sofre|precisa|consegue|sabe|lembra)\b/,
+  /\b(?:essa|esse|esta|este)\s+(?:senhor[a]?|companheiro[a]?)\b[^?]*\?/,
+  /\b(?:dr\.?|doutor[a]?)\s+[a-z]{3,}\b.*\bfalou\b/i,
 ];
 
 const prosecutorPatterns: RegExp[] = [
@@ -203,6 +217,10 @@ function inferRoleFromCourtDialogue(text: string, voice?: VoiceFeatures): RoleIn
     return { role: "JUIZ", confidence: 0.81 };
   }
 
+  if (judgeQuestionPatterns.some((pattern) => pattern.test(normalized))) {
+    return { role: "JUIZ", confidence: 0.78 };
+  }
+
   if (prosecutorPatterns.some((pattern) => pattern.test(normalized))) {
     return { role: "PROCURADOR", confidence: 0.79 };
   }
@@ -239,6 +257,72 @@ function matchesAsWholeWord(haystack: string, needle: string): boolean {
   if (needle.length < MIN_NAME_LENGTH_FOR_MATCH) return false;
   const pattern = new RegExp(`\\b${escapeForRegex(needle)}\\b`);
   return pattern.test(haystack);
+}
+
+/**
+ * Quando o engine upstream (Chirp 3) entrega speakerLabels acusticamente
+ * confiáveis, um mesmo speaker DEVE ter um único papel ao longo de toda a
+ * audiência. A inferência por segmento independente (em diarizeSegmentsByRole)
+ * pode "trocar" papel entre segmentos do mesmo speaker dependendo do conteúdo
+ * textual, gerando saídas como "JUIZCorreto" (resposta da parte mas com label
+ * JUIZ porque a frase é curta e ambígua).
+ *
+ * Esta função agrupa por speakerId upstream, soma a confiança de inferência
+ * por papel ao longo de TODOS os segmentos do mesmo speaker, e estampa o
+ * papel dominante em todos os segmentos do grupo. Se < 50% dos segmentos
+ * tiverem speakerId (engines locais sem diarização nativa), é no-op.
+ */
+export function harmonizeRolesByUpstreamSpeaker(
+  segments: TranscriptSegment[],
+  metadata?: ProcessMetadata
+): TranscriptSegment[] {
+  const groups = new Map<string, TranscriptSegment[]>();
+  for (const s of segments) {
+    if (!s.speakerId) continue;
+    const arr = groups.get(s.speakerId);
+    if (arr) arr.push(s);
+    else groups.set(s.speakerId, [s]);
+  }
+
+  const withSpeakerCount = [...groups.values()].reduce((a, g) => a + g.length, 0);
+  if (withSpeakerCount < segments.length / 2) return segments;
+
+  const dominantRoleByGroup = new Map<string, SpeakerRole>();
+  for (const [groupId, group] of groups) {
+    const tally: Record<SpeakerRole, number> = {
+      JUIZ: 0,
+      PARTE: 0,
+      PROCURADOR: 0,
+      DESCONHECIDO: 0,
+    };
+    for (const s of group) {
+      const fromText = inferSpeakerRoleFromText(s.text, metadata);
+      const fromDialogue = inferRoleFromCourtDialogue(s.text, s.voiceFeatures);
+      const best =
+        fromDialogue && fromDialogue.confidence > fromText.confidence
+          ? fromDialogue
+          : fromText;
+      if (best.role !== "DESCONHECIDO") {
+        tally[best.role] += best.confidence;
+      }
+    }
+    let bestRole: SpeakerRole = "DESCONHECIDO";
+    let bestScore = 0;
+    for (const role of ["JUIZ", "PARTE", "PROCURADOR"] as const) {
+      if (tally[role] > bestScore) {
+        bestScore = tally[role];
+        bestRole = role;
+      }
+    }
+    if (bestScore > 0) dominantRoleByGroup.set(groupId, bestRole);
+  }
+
+  return segments.map((s) => {
+    if (!s.speakerId) return s;
+    const role = dominantRoleByGroup.get(s.speakerId);
+    if (!role) return s;
+    return { ...s, role };
+  });
 }
 
 export function inferSpeakerRoleFromText(
