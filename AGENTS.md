@@ -58,7 +58,9 @@ Copie [`.env.example`](.env.example) para `.env` e ajuste os valores.
 - `npm run build` / `npm run start` — produção.
 - `npm run lint` / `npm run type-check` — qualidade estática.
 - `npm run test` — Vitest (libs e algumas rotas).
-- `npm run test:e2e` — Playwright (smoke em `e2e/`; na primeira vez, instale o Chromium com `node ./node_modules/@playwright/test/cli.js install chromium`).
+- `npm run test:e2e` — Playwright (suite completa em `e2e/`; na primeira vez, instale o Chromium com `node ./node_modules/@playwright/test/cli.js install chromium`).
+- `npm run test:e2e:setup` — aplica migrações e roda o seed no `E2E_DATABASE_URL`. Necessário antes da primeira execução da suite e2e.
+- `npm run test:e2e:reset` — reseta o DB de teste (perde dados) e re-seedda; útil quando schema mudou. Configure `.env.e2e` a partir de `.env.e2e.example` antes.
 - `npx prisma migrate dev` — aplicar migrações; `npx prisma db seed` — usuários de exemplo (ver seed).
 
 ## Papéis e regras de negócio
