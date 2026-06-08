@@ -26,8 +26,17 @@ def run_check() -> None:
     import mlx_whisper  # noqa: F401
 
 
+def _resolve_initial_prompt() -> str:
+    return os.environ.get(
+        "WHISPER_MLX_INITIAL_PROMPT",
+        "Audiência judicial. Magistrado, defesa, acusação, testemunha, depoimento.",
+    ).strip()
+
+
 def transcribe_to_payload(wav_path: str, model_id: str) -> dict:
     import mlx_whisper
+
+    initial_prompt = _resolve_initial_prompt()
 
     result = mlx_whisper.transcribe(
         wav_path,
@@ -39,6 +48,7 @@ def transcribe_to_payload(wav_path: str, model_id: str) -> dict:
         logprob_threshold=-1.0,
         no_speech_threshold=0.6,
         temperature=(0.0, 0.2, 0.4, 0.6, 0.8, 1.0),
+        initial_prompt=initial_prompt or None,
     )
 
     full_text = (result.get("text") or "").strip()

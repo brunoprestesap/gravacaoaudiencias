@@ -24,12 +24,6 @@ export function getWhisperMlxScriptPath(): string {
   return path.join(process.cwd(), "scripts", "transcribe_whisper_mlx.py");
 }
 
-export function getWhisperMlxModelId(): string {
-  return (
-    process.env.WHISPER_MLX_MODEL_ID?.trim() || DEFAULT_WHISPER_MLX_MODEL_ID
-  );
-}
-
 function randomSegmentId(index: number) {
   return `${Date.now()}-${index}-${Math.random().toString(36).slice(2, 10)}`;
 }

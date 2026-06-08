@@ -26,6 +26,7 @@ Monólito **Next.js 16** (App Router) para gravação e consulta de audiências 
 | `WHISPER_MODEL_PATH` | Se `whisper` | Caminho absoluto do modelo `ggml-*.bin`. |
 | `TRANSCRIPTION_PYTHON` | Não | Intérprete Python para Wav2Vec2 / legal-whisper (padrão: `python3`). |
 | `WHISPER_MLX_MODEL_ID` | Não | ID do modelo HF MLX Community para o motor `whisper-mlx` (padrão: `mlx-community/whisper-large-v3-mlx`). |
+| `WHISPER_MLX_INITIAL_PROMPT` | Não | Prompt inicial para o motor `whisper-mlx` (bias léxico jurídico). Padrão: texto de audiência judicial. |
 | `TRANSCRIPTION_WHISPER_MLX_SCRIPT` | Não | Caminho do script Python whisper-mlx (padrão: `scripts/transcribe_whisper_mlx.py`). |
 | `TRANSCRIPTION_WAV2VEC_SCRIPT` | Não | Caminho do script Python Wav2Vec2 (relativo ao cwd ou absoluto); padrão: `scripts/transcribe_wav2vec2.py`. |
 | `HF_MODEL_ID` | Não | ID do modelo no Hugging Face para Wav2Vec2 (padrão: `jonatasgrosman/wav2vec2-large-xlsr-53-portuguese`). |
