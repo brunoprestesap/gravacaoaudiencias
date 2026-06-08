@@ -9,6 +9,7 @@ Monólito **Next.js 16** (App Router) para gravação e consulta de audiências 
 - **FFmpeg** instalado e disponível no `PATH` do processo que executa o Next (upload padrão, remux de recuperação e transcodificação WebM → MP4).
 - **Transcrição em lote (opcional Wav2Vec2 ou legal-whisper):** Python 3 com `pip install -r requirements-transcription.txt` (PyTorch + Transformers; `peft` + `accelerate` exigidos pelo motor `legal-whisper`; `silero-vad` exigido se `TRANSCRIPTION_USE_VAD=1`; `bitsandbytes` exigido em GPU para `LEGAL_WHISPER_QUANT=8bit`); o primeiro uso pode baixar o modelo do Hugging Face.
 - **Transcrição em lote (opcional Google Cloud Speech-to-Text v2 + Chirp 2):** sem dependências Python. Exige Service Account com papéis `Speech-to-Text User` + `Storage Object Admin` no bucket `GCS_TRANSCRIPTION_BUCKET`. As libs `@google-cloud/speech` e `@google-cloud/storage` já estão no `package.json`.
+- **Transcrição em lote (opcional whisper-mlx):** Python 3 com `pip install mlx-whisper` (requer Apple Silicon M1+). O modelo é baixado automaticamente do Hugging Face na primeira transcrição (~1.5 GB para o padrão `large-v3`). Defina `TRANSCRIPTION_PYTHON` se usar um venv isolado.
 - **Geração de Termo de Audiência (opcional Maritaca AI):** após transcrição concluída, o servidor pode gerar o Termo de Audiência via LLM (`sabia-4`). Requer `MARITACA_API_KEY`. Bibliotecas `docx` e `pdfkit` (já no `package.json`) cuidam do export final.
 
 ## Variáveis de ambiente
@@ -20,10 +21,12 @@ Monólito **Next.js 16** (App Router) para gravação e consulta de audiências 
 | `NEXTAUTH_URL` | Sim em produção | URL base da aplicação (ex.: `http://localhost:3000`). |
 | `UPLOAD_DIR` | Não | Diretório absoluto para arquivos de vídeo; padrão: `<cwd>/uploads`. |
 | `UPLOAD_DEBUG_LOGS` | Não | Em dev, `false` desativa logs extras de upload (padrão: logs ativos fora de produção). |
-| `LOCAL_TRANSCRIPTION_ENGINE` | Não | `whisper` (padrão), `wav2vec2`, `legal-whisper` ou `google` — motor da transcrição em lote. |
+| `LOCAL_TRANSCRIPTION_ENGINE` | Não | `whisper` (padrão), `wav2vec2`, `legal-whisper`, `google` ou `whisper-mlx` — motor da transcrição em lote. |
 | `WHISPER_CPP_BIN` | Se `whisper` | Caminho absoluto do executável do whisper.cpp. |
 | `WHISPER_MODEL_PATH` | Se `whisper` | Caminho absoluto do modelo `ggml-*.bin`. |
 | `TRANSCRIPTION_PYTHON` | Não | Intérprete Python para Wav2Vec2 / legal-whisper (padrão: `python3`). |
+| `WHISPER_MLX_MODEL_ID` | Não | ID do modelo HF MLX Community para o motor `whisper-mlx` (padrão: `mlx-community/whisper-large-v3-mlx`). |
+| `TRANSCRIPTION_WHISPER_MLX_SCRIPT` | Não | Caminho do script Python whisper-mlx (padrão: `scripts/transcribe_whisper_mlx.py`). |
 | `TRANSCRIPTION_WAV2VEC_SCRIPT` | Não | Caminho do script Python Wav2Vec2 (relativo ao cwd ou absoluto); padrão: `scripts/transcribe_wav2vec2.py`. |
 | `HF_MODEL_ID` | Não | ID do modelo no Hugging Face para Wav2Vec2 (padrão: `jonatasgrosman/wav2vec2-large-xlsr-53-portuguese`). |
 | `HF_HOME` | Não | Cache de modelos/datasets HF (opcional). |

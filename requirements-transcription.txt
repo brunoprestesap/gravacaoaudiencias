@@ -18,3 +18,7 @@ peft>=0.10.0,<1
 accelerate>=0.27.0,<2
 silero-vad>=5.1.0
 # bitsandbytes>=0.43.0 ; sys_platform != "darwin"  # GPU CUDA only — descomente em produção
+
+# Motor whisper-mlx (Apple Silicon / MLX). Requer macOS com chip M1+.
+# mlx-whisper baixa o modelo do Hugging Face na primeira execução (~1.5 GB para large-v3).
+mlx-whisper>=0.4.0
