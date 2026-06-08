@@ -12,3 +12,5 @@ export const DEFAULT_GOOGLE_TRANSCRIPTION_MODEL = "chirp_2";
 export const DEFAULT_GOOGLE_TRANSCRIPTION_LANGUAGE = "pt-BR";
 export const DEFAULT_GOOGLE_DIARIZATION_MIN_SPEAKERS = 2;
 export const DEFAULT_GOOGLE_DIARIZATION_MAX_SPEAKERS = 6;
+
+export const DEFAULT_WHISPER_MLX_MODEL_ID = "mlx-community/whisper-large-v3-mlx";
