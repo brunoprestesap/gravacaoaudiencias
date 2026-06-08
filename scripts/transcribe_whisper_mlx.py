@@ -60,7 +60,6 @@ def transcribe_to_payload(wav_path: str, model_id: str) -> dict:
         hallucination_silence_threshold=2.0,
         temperature=(0.0, 0.2, 0.4),
         initial_prompt=initial_prompt or None,
-        beam_size=5,
     )
 
     full_text = (result.get("text") or "").strip()
