@@ -38,17 +38,29 @@ def transcribe_to_payload(wav_path: str, model_id: str) -> dict:
 
     initial_prompt = _resolve_initial_prompt()
 
+    # compression_ratio_threshold: mlx-whisper avalia por janela de 30s (não por
+    # palavra como no HF pipeline). Português jurídico tem CR naturalmente alto
+    # (termos repetitivos) — o default 2.4 é calibrado para esse nível de chunk.
+    # Usar 1.35 (valor do legal-whisper/HF) faz quase todo chunk "falhar" e
+    # disparar a cascata de temperaturas, degradando qualidade e triplicando o tempo.
+    #
+    # condition_on_previous_text=True: mantém contexto entre chunks (nomes de
+    # partes, número do processo, termos estabelecidos). hallucination_silence_threshold
+    # é o mecanismo correto do mlx-whisper para suprimir hallucinations em silêncios,
+    # sem precisar cortar o contexto cross-chunk.
     result = mlx_whisper.transcribe(
         wav_path,
         path_or_hf_repo=model_id,
         language=LANGUAGE,
         word_timestamps=False,
-        condition_on_previous_text=False,
-        compression_ratio_threshold=1.35,
+        condition_on_previous_text=True,
+        compression_ratio_threshold=2.4,
         logprob_threshold=-1.0,
         no_speech_threshold=0.6,
-        temperature=(0.0, 0.2, 0.4, 0.6, 0.8, 1.0),
+        hallucination_silence_threshold=2.0,
+        temperature=(0.0, 0.2, 0.4),
         initial_prompt=initial_prompt or None,
+        beam_size=5,
     )
 
     full_text = (result.get("text") or "").strip()
