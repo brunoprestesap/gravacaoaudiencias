@@ -5,6 +5,7 @@ import { getLocalTranscriptionEngine } from "./engine";
 import { getWhisperConfig } from "./whisper";
 import { getTranscriptionPython, getWav2VecScriptPath } from "./wav2vec";
 import { getLegalWhisperScriptPath } from "./legal-whisper";
+import { getWhisperMlxScriptPath } from "./whisper-mlx";
 import { getVadScriptPath, isVadEnabled } from "./vad";
 import { createStorageClient, getGoogleTranscriptionConfig } from "./google/client";
 
@@ -134,6 +135,30 @@ export async function validateLocalTranscriptionRuntime() {
         "PYTHON_NOT_AVAILABLE",
         "Python 3 com PyTorch, Transformers e PEFT não está disponível ou falhou na verificação (--check). " +
           "Instale as dependências em requirements-transcription.txt e defina TRANSCRIPTION_PYTHON se necessário."
+      );
+    }
+    return;
+  }
+
+  if (engine === "whisper-mlx") {
+    const scriptPath = getWhisperMlxScriptPath();
+    try {
+      await access(scriptPath);
+    } catch {
+      throw new LocalTranscriptionError(
+        "CONFIG_MISSING",
+        `Script whisper-mlx não encontrado: ${scriptPath}`
+      );
+    }
+
+    const pythonBin = getTranscriptionPython();
+    try {
+      await execFileAsync(pythonBin, [scriptPath, "--check"]);
+    } catch {
+      throw new LocalTranscriptionError(
+        "PYTHON_NOT_AVAILABLE",
+        "mlx-whisper não está disponível para o Python configurado. " +
+          "Instale com: pip install mlx-whisper (requer Apple Silicon)."
       );
     }
     return;
