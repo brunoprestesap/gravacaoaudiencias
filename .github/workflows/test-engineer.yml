@@ -1,35 +1,76 @@
-name: AI Test Engineer
+name: Testes
 
 on:
   pull_request:
     types: [opened, synchronize, reopened]
 
+permissions:
+  contents: read
+
 jobs:
-  test-engineer:
+  test:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: audiencia_e2e
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    env:
+      # Banco descartável do próprio job; a senha não é um segredo.
+      E2E_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/audiencia_e2e
 
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
-      - name: Get git diff
-        id: diff
-        run: |
-          git fetch origin main
-          echo "DIFF<<EOF" >> $GITHUB_OUTPUT
-          git diff origin/main...HEAD >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+      - name: Generate Prisma Client
+        run: npx prisma generate
 
-      - name: Run Claude Code Agent
-        run: |
-          npx claude-code run test-engineer \
-            --input CLAUDE.md \
-            --input "${{ steps.diff.outputs.DIFF }}"
+      - name: Type check
+        run: npm run type-check
 
-      - name: Run tests (safety net)
-        run: |
-          npm run test:unit
-          npm run test:e2e
+      - name: Unit tests
+        run: npm run test
+
+      # O upload e a transcrição dependem do FFmpeg no servidor.
+      - name: Install FFmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Prepare E2E database
+        run: npm run test:e2e:setup
+
+      - name: E2E tests
+        run: npm run test:e2e
+
+      - name: Upload E2E results
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v5
+        with:
+          name: playwright-results
+          path: test-results/
+          retention-days: 7
