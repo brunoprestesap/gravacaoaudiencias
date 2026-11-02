@@ -1,6 +1,46 @@
 import type { HybridLayout, MultiCameraLayout } from "@/types/recording";
 import { RECORDING, HYBRID_AUDIO, HYBRID_CANVAS, MULTI_CAMERA_CANVAS } from "@/lib/constants";
 
+// ─── Frame Ticker ────────────────────────────────────────────────────────────
+
+/**
+ * Chama `onTick` no ritmo de `fps`, mesmo com a aba oculta ou coberta por outra janela.
+ *
+ * O temporizador roda em um Worker porque, na aba principal oculta, o Chromium para o
+ * requestAnimationFrame e limita o setInterval a cerca de 1 por segundo. Medido gravando
+ * com a aba oculta: rAF 0 quadros/s, setInterval 1,1 quadros/s, Worker 24,3 quadros/s.
+ * Retorna a função que encerra o temporizador.
+ */
+function startFrameTicker(onTick: () => void, fps: number): () => void {
+  const intervalMs = 1000 / fps;
+  let stop = () => {};
+
+  const startMainThreadTimer = () => {
+    const intervalId = setInterval(onTick, intervalMs);
+    stop = () => clearInterval(intervalId);
+  };
+
+  try {
+    const url = URL.createObjectURL(
+      new Blob([`setInterval(() => postMessage(0), ${intervalMs});`], {
+        type: "text/javascript",
+      })
+    );
+    const worker = new Worker(url);
+    URL.revokeObjectURL(url);
+    worker.onmessage = onTick;
+    worker.onerror = () => {
+      worker.terminate();
+      startMainThreadTimer();
+    };
+    stop = () => worker.terminate();
+  } catch {
+    startMainThreadTimer();
+  }
+
+  return () => stop();
+}
+
 // ─── Multi-Camera Stream Combiner ────────────────────────────────────────────
 
 export interface MultiCameraStreamHandle {
@@ -156,7 +196,7 @@ export function combineMultipleCameraStreams(
   ]);
 
   // ── Draw + capture ───────────────────────────────────────────────────────────
-  // setInterval ensures the draw loop keeps running even when the tab is hidden.
+  // startFrameTicker keeps the draw loop running even when the tab is hidden.
   // requestFrame() explicitly pushes each drawn frame into the MediaRecorder.
   function drawAndCapture() {
     if (destroyed) return;
@@ -166,7 +206,7 @@ export function combineMultipleCameraStreams(
     captureTrack.requestFrame();
   }
 
-  const intervalId = setInterval(drawAndCapture, 1000 / FPS);
+  const stopTicker = startFrameTicker(drawAndCapture, FPS);
 
   // ── setLayout: update variable + push an immediate frame into the recording ──
   const setLayout = (layout: MultiCameraLayout) => {
@@ -182,7 +222,7 @@ export function combineMultipleCameraStreams(
     setLayout,
     destroy: () => {
       destroyed = true;
-      clearInterval(intervalId);
+      stopTicker();
       audioCtx.close().catch(() => {});
       videos.forEach((v) => { v.srcObject = null; });
     },
@@ -305,10 +345,8 @@ export function combineStreams(
     }
   }
 
-  // ── Animation loop ────────────────────────────────────────────────────────
-  let rafId: number;
-
-  function draw() {
+  // ── Draw + capture ────────────────────────────────────────────────────────
+  function drawAndCapture() {
     if (destroyed) return;
 
     ctx.fillStyle = "#000";
@@ -330,10 +368,8 @@ export function combineStreams(
       drawLayout(currentLayout, 1);
     }
 
-    rafId = requestAnimationFrame(draw);
+    captureTrack.requestFrame();
   }
-
-  rafId = requestAnimationFrame(draw);
 
   // ── Audio mixing ──────────────────────────────────────────────────────────
   // Câmera (mic) tem ganho 1.0; tela é atenuada para HYBRID_AUDIO.SCREEN_GAIN
@@ -362,7 +398,10 @@ export function combineStreams(
   }
 
   // ── Combined stream ───────────────────────────────────────────────────────
-  const canvasStream = canvas.captureStream(FPS);
+  // captureStream(0): só entram na gravação os quadros enviados por requestFrame().
+  const canvasStream = canvas.captureStream(0);
+  const captureTrack = canvasStream.getVideoTracks()[0] as CanvasCaptureMediaStreamTrack;
+  const stopTicker = startFrameTicker(drawAndCapture, FPS);
   const combinedStream = new MediaStream([
     ...canvasStream.getVideoTracks(),
     ...destination.stream.getAudioTracks(),
@@ -377,7 +416,7 @@ export function combineStreams(
     },
     destroy: () => {
       destroyed = true;
-      cancelAnimationFrame(rafId);
+      stopTicker();
       audioCtx.close().catch(() => {});
       cameraVideo.srcObject = null;
       screenVideo.srcObject = null;

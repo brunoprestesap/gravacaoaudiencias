@@ -97,7 +97,7 @@ export const RecordingScreen = ({
     startHybrid,
     stopHybrid,
     setActiveTab: setHybridActiveTab,
-    handleCancelCaptureWithCameraOnly: handleCancelCaptureWithCameraOnlyRaw,
+    continueWithCameraOnly,
     handleCancelCaptureAbort,
   } = useHybridStream({
     selectedCamera,
@@ -259,12 +259,12 @@ export const RecordingScreen = ({
   }, [combinedStream, multiCameraStream, status, startRecorder]);
 
   const handleCancelCaptureWithCameraOnly = useCallback(async () => {
-    const stream = await handleCancelCaptureWithCameraOnlyRaw();
+    const stream = await continueWithCameraOnly();
     if (stream) {
       await createRecoveryRecord(metadata, modo);
       pendingStartRef.current = true;
     }
-  }, [handleCancelCaptureWithCameraOnlyRaw, createRecoveryRecord, metadata, modo]);
+  }, [continueWithCameraOnly, createRecoveryRecord, metadata, modo]);
 
   const start = isHybrid
     ? startHybridWrapper
@@ -280,8 +280,10 @@ export const RecordingScreen = ({
     }
     await stop();
     beginNewSegment();
+    // A troca de stream dispara o efeito que reinicia o gravador com a câmera.
     pendingStartRef.current = true;
-  }, [cameraOnlyStream, beginNewSegment, stop, toast]);
+    await continueWithCameraOnly();
+  }, [cameraOnlyStream, beginNewSegment, continueWithCameraOnly, stop, toast]);
 
   const handleScreenEndedStop = useCallback(() => {
     setShowScreenEndedModal(false);
@@ -798,7 +800,7 @@ export const RecordingScreen = ({
       >
         <p>O compartilhamento de tela do Teams foi encerrado durante a gravação híbrida.</p>
         <p className="mt-2 text-text-muted">
-          Para evitar gravação degradada, a captura foi pausada automaticamente. Escolha retomar apenas com câmera local ou encerrar.
+          A câmera e o microfone continuam sendo gravados até você escolher retomar apenas com a câmera local ou encerrar.
         </p>
       </Modal>
     </div>

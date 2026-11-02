@@ -37,10 +37,8 @@ export function useHybridStream({
       isIntentionalScreenStopRef.current = false;
       return;
     }
-    if (combinedHandleRef.current) {
-      combinedHandleRef.current.destroy();
-      combinedHandleRef.current = null;
-    }
+    // A composição segue viva: até o usuário decidir, a câmera e o microfone continuam
+    // na gravação. Destruí-la aqui fecharia o áudio e congelaria o vídeo.
     onScreenEndedUnexpectedly();
   }, [onScreenEndedUnexpectedly]);
 
@@ -121,8 +119,10 @@ export function useHybridStream({
     }
   }, []);
 
-  const handleCancelCaptureWithCameraOnly = useCallback(async () => {
+  const continueWithCameraOnly = useCallback(async () => {
     setShowCancelCaptureModal(false);
+    combinedHandleRef.current?.destroy();
+    combinedHandleRef.current = null;
     if (cameraOnlyStream) {
       setCombinedStream(cameraOnlyStream);
       return cameraOnlyStream;
@@ -158,7 +158,7 @@ export function useHybridStream({
     startHybrid,
     stopHybrid,
     setActiveTab,
-    handleCancelCaptureWithCameraOnly,
+    continueWithCameraOnly,
     handleCancelCaptureAbort,
   };
 }
