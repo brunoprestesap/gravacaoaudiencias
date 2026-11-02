@@ -12,6 +12,12 @@ export const RECORDING = {
   PJE_MAX_OUTPUT_SIZE_MB: 300,
 } as const;
 
+// Cerca de 30 minutos de gravação na taxa de RECORDING (~237 KB/s).
+export const STORAGE_MONITOR = {
+  LOW_FREE_BYTES: 430 * 1024 * 1024,
+  CHECK_INTERVAL_MS: 60_000,
+} as const;
+
 export const TOAST_DURATIONS = {
   success: 3000,
   info: 4000,
