@@ -2,11 +2,13 @@ import { MaritacaConfigError } from "./errors";
 
 const DEFAULT_BASE_URL = "https://chat.maritaca.ai/api";
 const DEFAULT_MODEL = "sabia-4";
+export const DEFAULT_MARITACA_TIMEOUT_MS = 5 * 60 * 1000;
 
 export interface MaritacaConfig {
   apiKey: string;
   model: string;
   baseUrl: string;
+  timeoutMs: number;
 }
 
 function readEnv(name: string): string | undefined {
@@ -23,5 +25,7 @@ export function getMaritacaConfig(): MaritacaConfig {
   const model = readEnv("MARITACA_MODEL") ?? DEFAULT_MODEL;
   const rawBaseUrl =
     readEnv("MARITACA_BASE_URL") ?? readEnv("MARITACA_API_URL") ?? DEFAULT_BASE_URL;
-  return { apiKey, model, baseUrl: rawBaseUrl.replace(/\/$/, "") };
+  const parsedTimeout = Number(readEnv("MARITACA_TIMEOUT_MS"));
+  const timeoutMs = parsedTimeout > 0 ? parsedTimeout : DEFAULT_MARITACA_TIMEOUT_MS;
+  return { apiKey, model, baseUrl: rawBaseUrl.replace(/\/$/, ""), timeoutMs };
 }

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const getSessionOrErrorMock = vi.fn();
 const findUniqueMock = vi.fn();
 const updateMock = vi.fn();
+const updateManyMock = vi.fn();
 const chamarMaritacaTermoMock = vi.fn();
 
 vi.mock("@/lib/api-auth", () => ({
@@ -14,6 +15,7 @@ vi.mock("@/lib/db", () => ({
     gravacao: {
       findUnique: (...args: unknown[]) => findUniqueMock(...args),
       update: (...args: unknown[]) => updateMock(...args),
+      updateMany: (...args: unknown[]) => updateManyMock(...args),
     },
   },
 }));
@@ -25,6 +27,7 @@ vi.mock("@/lib/termo-audiencia/maritaca", () => ({
 }));
 
 import { GET, PATCH, POST } from "./route";
+import { STALE_TERMO_REASON, STALE_TERMO_THRESHOLD_MS } from "@/lib/termo-recovery";
 
 const makeContext = (id = "gravacao-1") =>
   ({
@@ -182,6 +185,7 @@ describe("API /api/gravacoes/[id]/termo", () => {
       transcricaoTexto: "texto",
       transcricaoSegmentos: [],
       termoStatus: "PROCESSANDO",
+      termoAtualizadoEm: new Date(),
     });
     const res = await POST({} as never, makeContext());
     const json = await res.json();
@@ -189,6 +193,65 @@ describe("API /api/gravacoes/[id]/termo", () => {
     expect(json.termo.status).toBe("PROCESSANDO");
     expect(json.message).toContain("já está em geração");
     expect(updateMock).not.toHaveBeenCalled();
+  });
+
+  it("POST gera de novo quando o PROCESSANDO está obsoleto", async () => {
+    chamarMaritacaTermoMock.mockResolvedValue({ markdown: "# T", tipoSentenca: "outra" });
+    updateMock.mockResolvedValue({});
+    findUniqueMock.mockResolvedValue({
+      ...baseGravacao,
+      transcricaoStatus: "CONCLUIDA",
+      transcricaoTexto: "texto",
+      transcricaoSegmentos: [],
+      termoStatus: "PROCESSANDO",
+      termoAtualizadoEm: new Date(Date.now() - STALE_TERMO_THRESHOLD_MS - 1),
+    });
+
+    const res = await POST({} as never, makeContext());
+    const json = await res.json();
+
+    expect(json.message).not.toContain("já está em geração");
+    expect(updateMock).toHaveBeenCalled();
+    await vi.waitFor(() => expect(chamarMaritacaTermoMock).toHaveBeenCalledTimes(1));
+  });
+
+  it("GET marca como ERRO o PROCESSANDO obsoleto, liberando a nova tentativa", async () => {
+    findUniqueMock.mockResolvedValue({
+      ...baseGravacao,
+      termoStatus: "PROCESSANDO",
+      termoTexto: null,
+      termoEstruturado: null,
+      termoTipo: null,
+      termoErro: null,
+      termoAtualizadoEm: new Date(Date.now() - STALE_TERMO_THRESHOLD_MS - 1),
+    });
+
+    const res = await GET({} as never, makeContext());
+    const json = await res.json();
+
+    expect(json.termo.status).toBe("ERRO");
+    expect(json.termo.erro).toBe(STALE_TERMO_REASON);
+    const { where, data } = updateManyMock.mock.calls[0][0];
+    expect(where).toMatchObject({ id: "gravacao-1", termoStatus: "PROCESSANDO" });
+    expect(data).toMatchObject({ termoStatus: "ERRO", termoErro: STALE_TERMO_REASON });
+  });
+
+  it("GET mantém PROCESSANDO recente sem escrever no banco", async () => {
+    findUniqueMock.mockResolvedValue({
+      ...baseGravacao,
+      termoStatus: "PROCESSANDO",
+      termoTexto: null,
+      termoEstruturado: null,
+      termoTipo: null,
+      termoErro: null,
+      termoAtualizadoEm: new Date(),
+    });
+
+    const res = await GET({} as never, makeContext());
+    const json = await res.json();
+
+    expect(json.termo.status).toBe("PROCESSANDO");
+    expect(updateManyMock).not.toHaveBeenCalled();
   });
 
   it("PATCH salva edição manual do texto", async () => {

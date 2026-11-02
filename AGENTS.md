@@ -66,6 +66,7 @@ Monólito **Next.js 16** (App Router) para gravação e consulta de audiências 
 | `MARITACA_MODEL` | Não | Modelo Maritaca (padrão: `sabia-4` — 128k contexto, structured output, corpus jurídico BR). |
 | `MARITACA_BASE_URL` | Não | URL base da API Maritaca (padrão: `https://chat.maritaca.ai/api`). |
 | `MARITACA_API_URL` | Não | Nome alternativo de `MARITACA_BASE_URL`, usado só quando ela não está definida. |
+| `MARITACA_TIMEOUT_MS` | Não | Tempo limite da chamada à Maritaca (padrão: `300000`, 5 min). Mantenha abaixo de 10 min: depois disso, um termo em `PROCESSANDO` é tratado como interrompido. |
 | `GOOGLE_TRANSCRIPTION_DISABLE_PHRASES` | Não | `1` envia a transcrição sem phrase set (diagnóstico). |
 | `GOOGLE_TRANSCRIPTION_FORCE_NO_DIAR` | Não | `1` ignora `GOOGLE_TRANSCRIPTION_DIARIZATION_ENABLED` (diagnóstico). |
 
@@ -151,7 +152,7 @@ No motor `whisper` (whisper.cpp) também é passada a flag `--suppress-nst` que 
 
 - **Motor `mock`**: `LOCAL_TRANSCRIPTION_ENGINE=mock` devolve segmentos fixos e dispensa binários e modelos. A suite E2E usa esse motor.
 - **WAV ao lado do MP4**: o upload extrai um WAV direto do WebM original (`transcriptionAudioPathFor`) e a transcrição prefere esse arquivo, para evitar a perda de qualidade do AAC. Se a extração falhar, a transcrição usa o MP4. O `DELETE` da gravação também apaga esse WAV.
-- **Recuperação no boot**: [`src/instrumentation.ts`](src/instrumentation.ts) marca como `ERRO` toda gravação em `PROCESSANDO` quando o servidor inicia. Com mais de uma instância, um boot também marcaria transcrições ainda em andamento nas outras.
+- **Recuperação no boot**: [`src/instrumentation.ts`](src/instrumentation.ts) marca como `ERRO` toda transcrição e todo termo em `PROCESSANDO` quando o servidor inicia. Com mais de uma instância, um boot também marcaria transcrições ainda em andamento nas outras.
 
 ## Seed de desenvolvimento
 

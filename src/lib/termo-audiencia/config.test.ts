@@ -10,6 +10,7 @@ beforeEach(() => {
   delete process.env.MARITACA_MODEL;
   delete process.env.MARITACA_BASE_URL;
   delete process.env.MARITACA_API_URL;
+  delete process.env.MARITACA_TIMEOUT_MS;
 });
 
 afterEach(() => {
@@ -24,6 +25,18 @@ describe("getMaritacaConfig", () => {
   it("lança MaritacaConfigError quando MARITACA_API_KEY é apenas espaços", () => {
     process.env.MARITACA_API_KEY = "   ";
     expect(() => getMaritacaConfig()).toThrow(MaritacaConfigError);
+  });
+
+  it.each([
+    [undefined, 300_000],
+    ["60000", 60_000],
+    ["abc", 300_000],
+    ["0", 300_000],
+    ["-5", 300_000],
+  ])("com MARITACA_TIMEOUT_MS=%s usa timeout de %i ms", (raw, expected) => {
+    process.env.MARITACA_API_KEY = "k";
+    if (raw !== undefined) process.env.MARITACA_TIMEOUT_MS = raw;
+    expect(getMaritacaConfig().timeoutMs).toBe(expected);
   });
 
   it("usa modelo default 'sabia-4' quando MARITACA_MODEL não setado", () => {

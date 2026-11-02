@@ -60,6 +60,47 @@ test.describe("Termo de Audiência", () => {
     await api.dispose();
   });
 
+  test("termo travado em PROCESSANDO libera nova tentativa e gera de novo", async ({ browser }) => {
+    const grav = await seedGravacaoComTranscricao();
+    await getPrisma().gravacao.update({
+      where: { id: grav.id },
+      data: {
+        termoStatus: "PROCESSANDO",
+        termoAtualizadoEm: new Date(Date.now() - 60 * 60 * 1000),
+      },
+    });
+
+    const ctx = await browser.newContext({ storageState: "e2e/.auth/servidor1.json" });
+    const page = await ctx.newPage();
+    await page.goto(`/gravacao/${grav.id}/reproduzir`);
+
+    await page.getByRole("button", { name: "Tentar novamente" }).click();
+
+    await expect.poll(async () => {
+      const row = await getPrisma().gravacao.findUnique({ where: { id: grav.id } });
+      return row?.termoStatus;
+    }, { timeout: 15_000 }).toBe("CONCLUIDA");
+    await ctx.close();
+  });
+
+  test("PROCESSANDO recente continua bloqueando nova geração", async ({ playwright }) => {
+    const grav = await seedGravacaoComTranscricao();
+    await getPrisma().gravacao.update({
+      where: { id: grav.id },
+      data: { termoStatus: "PROCESSANDO", termoAtualizadoEm: new Date() },
+    });
+    const api = await playwright.request.newContext({
+      storageState: "e2e/.auth/servidor1.json",
+      baseURL,
+    });
+
+    const post = await api.post(`/api/gravacoes/${grav.id}/termo`);
+    const body = (await post.json()) as { message: string };
+
+    expect(body.message).toContain("já está em geração");
+    await api.dispose();
+  });
+
   test("POST sem transcrição retorna 400", async ({ playwright }) => {
     const grav = await seedGravacao({ ownerUsername: "servidor1" });
     const api = await playwright.request.newContext({
