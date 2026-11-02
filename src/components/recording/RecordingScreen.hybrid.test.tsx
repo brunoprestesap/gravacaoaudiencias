@@ -7,6 +7,13 @@ const destroy = vi.fn();
 const beginNewSegment = vi.fn();
 const combinedStream = { id: "combinado", getAudioTracks: () => [], getTracks: () => [] };
 const createRecoveryRecord = vi.fn(async () => {});
+const getAllChunks = vi.fn(async (): Promise<unknown[]> => []);
+const chunkStorage = { priorElapsedMs: 0 };
+const uploadRecoverySegments = vi.fn(async (..._args: unknown[]) => ({
+  fileSize: 1,
+  warning: null,
+  encoding: null,
+}));
 const multiCamera = {
   combinedStream: null as unknown,
   sourceStreams: [] as unknown[],
@@ -34,8 +41,9 @@ vi.mock("@/hooks/useChunkStorage", () => ({
   useChunkStorage: () => ({
     chunkCount: 2,
     totalBytes: 0,
+    priorElapsedMs: chunkStorage.priorElapsedMs,
     saveChunk: vi.fn(async () => {}),
-    getAllChunks: vi.fn(async () => []),
+    getAllChunks,
     clearChunks: vi.fn(async () => {}),
     createRecoveryRecord,
     beginNewSegment,
@@ -66,6 +74,10 @@ const flush = vi.fn(async () => true);
 vi.mock("@/hooks/useLiveTranscription", () => ({ useLiveTranscription: () => ({ flush }) }));
 vi.mock("@/hooks/useMultiCameraStream", () => ({
   useMultiCameraStream: () => multiCamera,
+}));
+vi.mock("@/lib/upload-client", () => ({
+  ensureGravacaoRecord: vi.fn(async () => {}),
+  uploadRecoverySegments: (...args: unknown[]) => uploadRecoverySegments(...args),
 }));
 
 import { RecordingScreen } from "./RecordingScreen";
@@ -268,5 +280,25 @@ describe("RecordingScreen presencial: queda de dispositivo", () => {
     fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
 
     expect(screen.getByTitle("Encerrar")).toBeTruthy();
+  });
+
+  it("ao retomar depois de recarregar, mostra e envia a duração de todos os trechos", async () => {
+    chunkStorage.priorElapsedMs = 300_000;
+    getAllChunks.mockResolvedValueOnce([
+      { chunkIndex: 0, timestamp: 1, segmentIndex: 0, data: new Blob(["a"]) },
+    ]);
+    try {
+      await renderPresencial();
+      expect(screen.getByText("00:05:00")).toBeTruthy();
+
+      fireEvent.click(screen.getByTitle("Encerrar"));
+      await screen.findByText("Encerrar Gravação", { selector: "h2" });
+      fireEvent.click(screen.getAllByRole("button", { name: "Encerrar" }).at(-1)!);
+
+      await waitFor(() => expect(uploadRecoverySegments).toHaveBeenCalled());
+      expect(uploadRecoverySegments.mock.calls[0][2]).toMatchObject({ duracao: 300 });
+    } finally {
+      chunkStorage.priorElapsedMs = 0;
+    }
   });
 });

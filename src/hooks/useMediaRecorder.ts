@@ -22,6 +22,8 @@ interface UseMediaRecorderOptions {
    * sem a trilha perdida). "all": o gravador parou sozinho.
    */
   onDeviceLost?: (kind: DeviceLossKind) => void;
+  /** Tempo gravado antes desta tela abrir (retomada depois de recarregar). */
+  priorElapsedMs?: number;
 }
 
 export type DeviceLossKind = "audio" | "video" | "all";
@@ -40,6 +42,7 @@ export const useMediaRecorder = ({
   onChunk,
   onError,
   onDeviceLost,
+  priorElapsedMs = 0,
 }: UseMediaRecorderOptions) => {
   const [state, setState] = useState<MediaRecorderState>({
     status: "idle",
@@ -76,10 +79,13 @@ export const useMediaRecorder = ({
     }, 200);
   }, []);
 
+  // Guarda o trecho em andamento. Sem timer ativo (pausa), ele já foi guardado.
   const stopTimer = useCallback(() => {
     if (timerRef.current) {
       clearInterval(timerRef.current);
       timerRef.current = null;
+      pausedElapsedRef.current += Date.now() - startTimeRef.current;
+      setState((s) => ({ ...s, elapsedMs: pausedElapsedRef.current }));
     }
   }, []);
 
@@ -172,10 +178,10 @@ export const useMediaRecorder = ({
       };
 
       recorder.start(RECORDING.CHUNK_INTERVAL_MS);
-      pausedElapsedRef.current = 0;
+      // Não zera o tempo: um novo start é mais um trecho da mesma gravação.
       startTimer();
 
-      setState({ status: "recording", stream, elapsedMs: 0 });
+      setState((s) => ({ ...s, status: "recording", stream }));
     } catch (err) {
       const msg =
         err instanceof DOMException && err.name === "NotAllowedError"
@@ -200,7 +206,6 @@ export const useMediaRecorder = ({
   const pause = useCallback(() => {
     if (recorderRef.current?.state === "recording") {
       recorderRef.current.pause();
-      pausedElapsedRef.current += Date.now() - startTimeRef.current;
       stopTimer();
       setState((s) => ({ ...s, status: "paused" }));
     }
@@ -255,6 +260,7 @@ export const useMediaRecorder = ({
 
   return {
     ...state,
+    elapsedMs: priorElapsedMs + state.elapsedMs,
     start,
     pause,
     resume,

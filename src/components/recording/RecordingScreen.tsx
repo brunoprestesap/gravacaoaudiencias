@@ -93,6 +93,7 @@ export const RecordingScreen = ({
   const {
     chunkCount,
     totalBytes,
+    priorElapsedMs,
     saveChunk,
     getAllChunks,
     clearChunks,
@@ -183,6 +184,7 @@ export const RecordingScreen = ({
     onChunk: handleChunk,
     onError: handleRecordingError,
     onDeviceLost: setLostDevice,
+    priorElapsedMs,
   });
 
   // ── Audio analyser ────────────────────────────────────────────────────────

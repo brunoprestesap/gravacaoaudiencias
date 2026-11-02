@@ -165,4 +165,37 @@ describe("recording recovery integration", () => {
     )) as RecoveryRecord | undefined;
     expect(recovery?.lastChunkAt).toBe(result.current.lastSavedAt);
   });
+
+  it("estima o tempo já gravado pelos chunks salvos antes da tela abrir", async () => {
+    const gravacaoId = "grav-retomada";
+    const db = await getDb();
+    await db.put(
+      INDEXEDDB.CHUNKS_STORE,
+      makeChunk({ gravacaoId, chunkIndex: 0, timestamp: 1_710_000_005_000, content: "a" })
+    );
+    await db.put(
+      INDEXEDDB.CHUNKS_STORE,
+      makeChunk({ gravacaoId, chunkIndex: 1, timestamp: 1_710_000_010_000, segmentIndex: 1, content: "b" })
+    );
+
+    const { result } = renderHook(() => useChunkStorage(gravacaoId));
+    await waitFor(() => expect(result.current.priorElapsedMs).toBe(10_000));
+
+    // Chunks novos já entram no timer da sessão: somar aqui contaria duas vezes.
+    await act(async () => {
+      await result.current.saveChunk(new NodeBlob(["c"], { type: "video/webm" }) as Blob);
+    });
+    expect(result.current.chunkCount).toBe(3);
+    expect(result.current.priorElapsedMs).toBe(10_000);
+  });
+
+  it("não estima tempo anterior em uma gravação nova", async () => {
+    const { result } = renderHook(() => useChunkStorage("grav-nova"));
+
+    await act(async () => {
+      await result.current.saveChunk(new NodeBlob(["a"], { type: "video/webm" }) as Blob);
+    });
+
+    expect(result.current.priorElapsedMs).toBe(0);
+  });
 });
