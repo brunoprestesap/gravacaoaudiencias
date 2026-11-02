@@ -249,7 +249,7 @@ function judgeContextPhrases(judgeName: string): string[] {
 export function buildPhraseHints(metadata?: ProcessMetadata): PhraseHint[] {
   const highBoostTerms: string[] = [];
 
-  // Entidades raras / específicas do processo (boost máximo 18/20).
+  // Entidades raras / específicas do processo (PROCESS_BOOST).
   if (metadata?.numeroProcesso) highBoostTerms.push(metadata.numeroProcesso);
   if (metadata?.classeProcessual) highBoostTerms.push(metadata.classeProcessual);
   if (metadata?.vara) highBoostTerms.push(metadata.vara);
