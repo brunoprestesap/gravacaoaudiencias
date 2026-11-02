@@ -4,6 +4,9 @@ import { prisma } from "@/lib/db";
 import { apiError, apiOk } from "@/lib/api-response";
 import { gravacaoListScope } from "@/lib/gravacao-access";
 
+// O id compõe o nome do arquivo no upload, então não pode conter separador de caminho.
+const GRAVACAO_ID_REGEX = /^[A-Za-z0-9_-]{1,100}$/;
+
 // GET /api/gravacoes — Listar gravações
 export async function GET(req: NextRequest) {
   const { session, error } = await getSessionOrError();
@@ -104,6 +107,10 @@ export async function POST(req: NextRequest) {
 
     if (!metadata?.numeroProcesso || !modo) {
       return apiError("Número do processo e modo são obrigatórios.", 400);
+    }
+
+    if (id && (typeof id !== "string" || !GRAVACAO_ID_REGEX.test(id))) {
+      return apiError("Identificador de gravação inválido.", 400);
     }
 
     const gravacao = await prisma.gravacao.create({

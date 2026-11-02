@@ -17,6 +17,7 @@ import {
 } from "@/lib/upload-ffmpeg";
 import { transcriptionAudioPathFor } from "@/lib/transcription-local/audio";
 import { apiError } from "@/lib/api-response";
+import { resolveUploadPath } from "@/lib/upload-path";
 
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(process.cwd(), "uploads");
 const MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024; // 2GB de entrada
@@ -202,6 +203,9 @@ export async function POST(req: NextRequest) {
 
     const webmOutput = buildOutputPath(gravacao, "webm");
     const mp4Output = buildOutputPath(gravacao, "mp4");
+    if (!resolveUploadPath(webmOutput.relativePath) || !resolveUploadPath(mp4Output.relativePath)) {
+      return apiError("Identificador de gravação inválido para gravar o arquivo.", 400);
+    }
 
     // Create directories
     await mkdir(webmOutput.fullDir, { recursive: true });

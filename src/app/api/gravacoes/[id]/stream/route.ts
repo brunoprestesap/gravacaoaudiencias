@@ -5,9 +5,9 @@ import path from "path";
 import { getSessionOrError } from "@/lib/api-auth";
 import { assertGravacaoAccess } from "@/lib/gravacao-access";
 import { prisma } from "@/lib/db";
+import { resolveUploadPath } from "@/lib/upload-path";
 import { Readable } from "stream";
 
-const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(process.cwd(), "uploads");
 const PJE_MAX_OUTPUT_SIZE_BYTES = 300 * 1024 * 1024;
 
 function getVideoContentType(filePath: string): string {
@@ -51,7 +51,13 @@ export async function GET(req: NextRequest, context: RouteContext) {
     );
   }
 
-  const filePath = path.join(UPLOAD_DIR, gravacao.caminhoArquivo);
+  const filePath = resolveUploadPath(gravacao.caminhoArquivo);
+  if (!filePath) {
+    return NextResponse.json(
+      { error: "Arquivo não encontrado no servidor." },
+      { status: 404 }
+    );
+  }
   const contentType = getVideoContentType(filePath);
 
   let fileStat;

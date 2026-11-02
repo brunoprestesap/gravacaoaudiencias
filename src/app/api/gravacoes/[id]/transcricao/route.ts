@@ -1,4 +1,3 @@
-import path from "path";
 import { NextRequest } from "next/server";
 import { apiError, apiOk } from "@/lib/api-response";
 import { Prisma } from "@prisma/client";
@@ -21,9 +20,8 @@ import {
   validateLocalTranscriptionRuntime,
 } from "@/lib/transcription-local";
 import { isStaleProcessando } from "@/lib/transcricao-recovery";
+import { resolveUploadPath } from "@/lib/upload-path";
 import type { ProcessMetadata } from "@/types/recording";
-
-const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(process.cwd(), "uploads");
 
 interface RouteContext {
   params: Promise<{ id: string }>;
@@ -155,7 +153,10 @@ export async function POST(_req: NextRequest, context: RouteContext) {
     return apiError("A gravação precisa estar finalizada para transcrição.", 400);
   }
 
-  const absoluteVideoPath = path.join(UPLOAD_DIR, gravacao.caminhoArquivo);
+  const absoluteVideoPath = resolveUploadPath(gravacao.caminhoArquivo);
+  if (!absoluteVideoPath) {
+    return apiError("Caminho do arquivo da gravação é inválido.", 400);
+  }
 
   try {
     await validateLocalTranscriptionRuntime();

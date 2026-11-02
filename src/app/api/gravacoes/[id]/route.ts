@@ -1,17 +1,15 @@
 import { NextRequest } from "next/server";
-import path from "path";
 import { unlink } from "fs/promises";
 import { getSessionOrError } from "@/lib/api-auth";
 import { assertGravacaoAccess } from "@/lib/gravacao-access";
 import { prisma } from "@/lib/db";
 import { apiError, apiOk } from "@/lib/api-response";
 import { transcriptionAudioPathFor } from "@/lib/transcription-local/audio";
+import { resolveUploadPath } from "@/lib/upload-path";
 
 interface RouteContext {
   params: Promise<{ id: string }>;
 }
-
-const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(process.cwd(), "uploads");
 
 // GET /api/gravacoes/:id — Detalhes de uma gravação
 export async function GET(_req: NextRequest, context: RouteContext) {
@@ -57,7 +55,9 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
 
   try {
     const body = await req.json();
-    const allowedFields = ["status", "duracao", "tamanhoArquivo", "caminhoArquivo"];
+    // caminhoArquivo fica de fora: só o upload o define. As rotas de download, stream,
+    // transcrição e exclusão o usam como caminho em disco sem revalidar.
+    const allowedFields = ["status", "duracao", "tamanhoArquivo"];
     const updateData: Record<string, unknown> = {};
 
     for (const field of allowedFields) {
@@ -111,8 +111,14 @@ export async function DELETE(_req: NextRequest, context: RouteContext) {
   try {
     await prisma.gravacao.delete({ where: { id: gravacao.id } });
 
-    if (gravacao.caminhoArquivo) {
-      const absolutePath = path.join(UPLOAD_DIR, gravacao.caminhoArquivo);
+    const absolutePath = gravacao.caminhoArquivo
+      ? resolveUploadPath(gravacao.caminhoArquivo)
+      : null;
+    if (gravacao.caminhoArquivo && !absolutePath) {
+      console.warn(`[gravacoes] caminho fora de UPLOAD_DIR ignorado na exclusão: gravacao=${id}`);
+    }
+
+    if (absolutePath) {
       try {
         await unlink(absolutePath);
       } catch {
