@@ -23,6 +23,21 @@ describe("gravacao-access", () => {
     ).toBe(false);
   });
 
+  it.each([null, undefined, ""])(
+    "canReadGravacao: juiz com vara %j não lê nenhuma gravação",
+    (vara) => {
+      const semVara = { ...juiz, vara };
+      expect(canReadGravacao(semVara, gravacaoOwn)).toBe(false);
+      expect(canReadGravacao(semVara, { userId: "u1", vara: null })).toBe(false);
+    }
+  );
+
+  it("assertGravacaoAccess read retorna 403 para juiz sem vara", () => {
+    const res = assertGravacaoAccess({ ...juiz, vara: null }, gravacaoOwn, "read");
+    expect(res).not.toBeNull();
+    expect(res!.status).toBe(403);
+  });
+
   it("canServidorWriteGravacao exige papel e ownership", () => {
     expect(canServidorWriteGravacao(servidor, gravacaoOwn)).toBe(true);
     expect(canServidorWriteGravacao(servidor, gravacaoOther)).toBe(false);

@@ -25,6 +25,11 @@ import {
   segmentsFromLegalWhisperPayload,
   parseLegalWhisperTranscriptionOutput,
 } from "./legal-whisper";
+import {
+  runWhisperMlxPython,
+  segmentsFromWhisperMlxPayload,
+  parseWhisperMlxOutput,
+} from "./whisper-mlx";
 import { transcribeNormalizedWavWithGoogle } from "./google";
 import { transcribeWithMock } from "./mock";
 import { isVadEnabled, mapSegmentsToOriginalTimeline, runVadPreprocess } from "./vad";
@@ -84,6 +89,20 @@ async function transcribeNormalizedWavWithLegalWhisper(
   return { text, baseSegments: fromModel ?? createBatchSegmentsFromText(text) };
 }
 
+async function transcribeNormalizedWavWithWhisperMlx(
+  normalizedWavPath: string,
+  tempDir: string
+): Promise<{ text: string; baseSegments: TranscriptSegment[] }> {
+  const jsonOutPath = path.join(tempDir, "transcricao.json");
+  await runWhisperMlxPython(normalizedWavPath, jsonOutPath);
+
+  const raw = await readFile(jsonOutPath, "utf-8");
+  const payload = parseWhisperMlxOutput(raw);
+  const text = typeof payload.text === "string" ? payload.text.trim() : "";
+  const fromModel = segmentsFromWhisperMlxPayload(payload);
+  return { text, baseSegments: fromModel ?? createBatchSegmentsFromText(text) };
+}
+
 async function dispatchEngine(
   engine: ReturnType<typeof getLocalTranscriptionEngine>,
   asrInputWavPath: string,
@@ -102,6 +121,9 @@ async function dispatchEngine(
   }
   if (engine === "legal-whisper") {
     return transcribeNormalizedWavWithLegalWhisper(asrInputWavPath, tempDir);
+  }
+  if (engine === "whisper-mlx") {
+    return transcribeNormalizedWavWithWhisperMlx(asrInputWavPath, tempDir);
   }
   return transcribeNormalizedWavWithGoogle(asrInputWavPath, metadata);
 }

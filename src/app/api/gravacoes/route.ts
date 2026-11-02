@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { getSessionOrError } from "@/lib/api-auth";
 import { prisma } from "@/lib/db";
 import { apiError, apiOk } from "@/lib/api-response";
+import { gravacaoListScope } from "@/lib/gravacao-access";
 
 // GET /api/gravacoes — Listar gravações
 export async function GET(req: NextRequest) {
@@ -16,17 +17,12 @@ export async function GET(req: NextRequest) {
 
   const user = session!.user;
 
-  // Build where clause based on role
-  const where: Record<string, unknown> = {};
-
-  if (user.role === "SERVIDOR") {
-    where.userId = user.id;
-  } else {
-    // JUIZ: all recordings from their vara
-    if (user.vara) {
-      where.vara = user.vara;
-    }
+  const scope = gravacaoListScope(user);
+  if (!scope) {
+    return apiOk({ gravacoes: [], total: 0, page, limit });
   }
+
+  const where: Record<string, unknown> = { ...scope };
 
   // Search by processo number
   if (search) {

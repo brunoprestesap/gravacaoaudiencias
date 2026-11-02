@@ -241,11 +241,30 @@ function inferRoleFromCourtDialogue(text: string, voice?: VoiceFeatures): RoleIn
   return null;
 }
 
-/** Resposta muito curta típica de parte/testemunha após pergunta do juiz. */
+/** Resposta típica de parte/testemunha após pergunta do juiz. */
 function looksLikeBriefPartyReply(text: string): boolean {
-  const n = normalizeText(text.trim()).replace(/[.!?…]+$/u, "").trim();
-  if (n.length === 0 || n.length > 40) return false;
-  return /^(sim|isso|foi|ne|verdade|uhum|uhm|certo|isso mesmo|exato)$/.test(n);
+  const n = normalizeText(text.trim()).replace(/[.!?…,]+$/u, "").trim();
+  const words = n.split(/\s+/).filter(Boolean);
+  const wc = words.length;
+  if (wc === 0 || wc > 12) return false;
+
+  // Segmento que termina com "?" mas NÃO é tag question ("né?", "não é?") →
+  // provavelmente o juiz continua perguntando; não é reply da parte.
+  const hasTagQuestion = /,\s*(ne|nao e|e isso)\s*\??$/.test(normalizeText(text.trim()));
+  const endsWithQ = text.trimEnd().endsWith("?");
+  if (endsWithQ && !hasTagQuestion) return false;
+
+  // Confirmações/negações rituais (1 palavra) — sempre PARTE reply.
+  if (/^(sim|nao|isso|foi|ne|verdade|uhum|uhm|certo|isso mesmo|exato|correto|nada)$/.test(n)) return true;
+
+  // Sequência numérica com múltiplos algarismos (juiz contando páginas/itens) → não é reply.
+  if (wc >= 2 && /^\d[\d,\s.]*$/.test(n)) return false;
+
+  // Respostas muito curtas (≤ 4 palavras) que não terminam em "?" — resposta factual.
+  if (wc <= 4) return true;
+
+  // Respostas médias (5–12 palavras) com marcadores típicos de testemunha/parte.
+  return /^(eu |na |no |em |ele |ela |eles |elas |foi |era |e |fui |tinha |antigamente|atualmente|desde |ate |trabalhava|morava|recebia|moro |trabalho |fazia |nunca |sempre )/.test(n);
 }
 
 const MIN_NAME_LENGTH_FOR_MATCH = 4;

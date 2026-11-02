@@ -3,6 +3,7 @@ export type LocalTranscriptionEngine =
   | "wav2vec2"
   | "legal-whisper"
   | "google"
+  | "whisper-mlx"
   | "mock";
 
 export function getLocalTranscriptionEngine(): LocalTranscriptionEngine {
@@ -15,6 +16,9 @@ export function getLocalTranscriptionEngine(): LocalTranscriptionEngine {
   }
   if (raw === "google" || raw === "gcp" || raw === "chirp" || raw === "chirp_2") {
     return "google";
+  }
+  if (raw === "whisper-mlx" || raw === "whispermlx" || raw === "whisper_mlx") {
+    return "whisper-mlx";
   }
   if (raw === "mock") {
     return "mock";
