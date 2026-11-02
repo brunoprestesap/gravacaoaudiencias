@@ -23,6 +23,7 @@ export function useMultiCameraStream({
   const cameraStreamsRef = useRef<MediaStream[]>([]);
   const micStreamRef = useRef<MediaStream | null>(null);
   const [combinedStream, setCombinedStream] = useState<MediaStream | null>(null);
+  const [sourceStreams, setSourceStreams] = useState<MediaStream[]>([]);
 
   /** Call this directly to change layout on the live compositor — no React cycle needed. */
   const setLayout = useCallback((layout: MultiCameraLayout) => {
@@ -76,6 +77,7 @@ export function useMultiCameraStream({
 
     const handle = combineMultipleCameraStreams(streams, micStream, initialLayout);
     handleRef.current = handle;
+    setSourceStreams(micStream ? [...streams, micStream] : streams);
     setCombinedStream(handle.stream);
     return handle.stream;
   }, [selectedCameras, selectedMicrophone]);
@@ -89,6 +91,7 @@ export function useMultiCameraStream({
     cameraStreamsRef.current = [];
     micStreamRef.current?.getTracks().forEach((t) => t.stop());
     micStreamRef.current = null;
+    setSourceStreams([]);
     setCombinedStream(null);
   }, []);
 
@@ -101,5 +104,5 @@ export function useMultiCameraStream({
     };
   }, []);
 
-  return { combinedStream, start, stop, setLayout };
+  return { combinedStream, sourceStreams, start, stop, setLayout };
 }

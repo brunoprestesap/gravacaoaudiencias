@@ -7,7 +7,7 @@ import { RecordingStatus } from "./RecordingStatus";
 import { LayoutSwitcher } from "./LayoutSwitcher";
 import { MultiCameraLayoutSwitcher } from "./MultiCameraLayoutSwitcher";
 import { CameraSelector } from "./CameraSelector";
-import { useMediaRecorder } from "@/hooks/useMediaRecorder";
+import { useMediaRecorder, type DeviceLossKind } from "@/hooks/useMediaRecorder";
 import { useChunkStorage } from "@/hooks/useChunkStorage";
 import { useDeviceDetection } from "@/hooks/useDeviceDetection";
 import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
@@ -18,6 +18,7 @@ import { AudioLevelIndicator } from "./AudioLevelIndicator";
 import { useLiveTranscription } from "@/hooks/useLiveTranscription";
 import { useHybridStream } from "@/hooks/useHybridStream";
 import { useMultiCameraStream } from "@/hooks/useMultiCameraStream";
+import { useStorageMonitor } from "@/hooks/useStorageMonitor";
 import { Modal } from "@/components/ui/Modal";
 import { uploadRecoverySegments } from "@/lib/upload-client";
 import { buildSegmentsFromChunks } from "@/lib/chunk-segmentation";
@@ -33,6 +34,21 @@ interface RecordingScreenProps {
   onComplete?: () => void;
 }
 
+const DEVICE_LOSS_MESSAGES: Record<DeviceLossKind, { title: string; description: string }> = {
+  audio: {
+    title: "Microfone desconectado",
+    description: "A gravação continua, mas sem áudio.",
+  },
+  video: {
+    title: "Câmera desconectada",
+    description: "A gravação continua, mas só com o áudio.",
+  },
+  all: {
+    title: "Câmera e microfone desconectados",
+    description: "A gravação parou. Os trechos já salvos foram preservados.",
+  },
+};
+
 export const RecordingScreen = ({
   gravacaoId,
   metadata,
@@ -44,6 +60,7 @@ export const RecordingScreen = ({
   const toast = useToast();
   const [showStopModal, setShowStopModal] = useState(false);
   const [showScreenEndedModal, setShowScreenEndedModal] = useState(false);
+  const [lostDevice, setLostDevice] = useState<DeviceLossKind | null>(null);
   const [hybridLayout, setHybridLayout] = useState<HybridLayout>("pip");
   const [multiCameraLayout, setMultiCameraLayout] = useState<MultiCameraLayout>("side-by-side");
   const [activeTab, setActiveTab] = useState<"camera" | "screen">("screen");
@@ -115,6 +132,7 @@ export const RecordingScreen = ({
   // ── Multi-camera stream ───────────────────────────────────────────────────
   const {
     combinedStream: multiCameraStream,
+    sourceStreams: multiCameraSources,
     start: startMultiCamera,
     stop: stopMultiCamera,
     setLayout: setMultiCameraCompositorLayout,
@@ -144,6 +162,10 @@ export const RecordingScreen = ({
   );
 
   const usesExternalStream = isHybrid || isMultiCamera;
+  const monitoredStreams = useMemo(() => {
+    if (isHybrid) return cameraOnlyStream ? [cameraOnlyStream] : undefined;
+    return isMultiCamera ? multiCameraSources : undefined;
+  }, [isHybrid, isMultiCamera, cameraOnlyStream, multiCameraSources]);
   const {
     status,
     stream: recorderStream,
@@ -156,12 +178,19 @@ export const RecordingScreen = ({
     cameraId: usesExternalStream ? undefined : selectedCamera,
     microphoneId: usesExternalStream ? undefined : selectedMicrophone,
     externalStream: isHybrid ? combinedStream : isMultiCamera ? multiCameraStream : undefined,
+    monitoredStreams,
     onChunk: handleChunk,
     onError: handleRecordingError,
+    onDeviceLost: setLostDevice,
   });
 
   // ── Audio analyser ────────────────────────────────────────────────────────
   const isActive = status === "recording" || status === "paused";
+
+  const warnLowStorage = useCallback(() => {
+    toast.warning("Pouco espaço em disco para a gravação. Libere espaço para não perder trechos.");
+  }, [toast]);
+  useStorageMonitor(isActive, warnLowStorage);
   const voiceFeaturesRef = useAudioAnalyser(recorderStream, isActive);
   const audioLevelRef = useAudioLevel(recorderStream, isActive);
 
@@ -214,13 +243,17 @@ export const RecordingScreen = ({
   const startMultiCameraWrapper = useCallback(async () => {
     if (chunkCount > 0) beginNewSegment();
     stopPreviewStream();
+    // Ligado antes do await: o efeito que inicia o gravador roda assim que o stream muda.
+    pendingStartRef.current = true;
     try {
       const stream = await startMultiCamera(multiCameraLayout);
       if (stream) {
         await createRecoveryRecord(metadata, modo);
-        pendingStartRef.current = true;
+      } else {
+        pendingStartRef.current = false;
       }
     } catch (err) {
+      pendingStartRef.current = false;
       toast.error(err instanceof Error ? err.message : "Erro ao iniciar câmeras.");
     }
   }, [
@@ -238,13 +271,17 @@ export const RecordingScreen = ({
   const startHybridWrapper = useCallback(async () => {
     if (chunkCount > 0) beginNewSegment();
     stopPreviewStream();
+    // Ligado antes do await: o efeito que inicia o gravador roda assim que o stream muda.
+    pendingStartRef.current = true;
     try {
       const stream = await startHybrid();
       if (stream) {
         await createRecoveryRecord(metadata, modo);
-        pendingStartRef.current = true;
+      } else {
+        pendingStartRef.current = false;
       }
     } catch (err) {
+      pendingStartRef.current = false;
       toast.error(err instanceof Error ? err.message : "Erro ao iniciar captura híbrida.");
     }
   }, [chunkCount, beginNewSegment, stopPreviewStream, startHybrid, createRecoveryRecord, metadata, modo, toast]);
@@ -259,10 +296,12 @@ export const RecordingScreen = ({
   }, [combinedStream, multiCameraStream, status, startRecorder]);
 
   const handleCancelCaptureWithCameraOnly = useCallback(async () => {
+    pendingStartRef.current = true;
     const stream = await continueWithCameraOnly();
     if (stream) {
       await createRecoveryRecord(metadata, modo);
-      pendingStartRef.current = true;
+    } else {
+      pendingStartRef.current = false;
     }
   }, [continueWithCameraOnly, createRecoveryRecord, metadata, modo]);
 
@@ -490,6 +529,21 @@ export const RecordingScreen = ({
     await start();
   }, [isSpeechSupported, speechUnsupportedReason, toast, start, startSpeech]);
 
+  const handleDeviceLostResume = useCallback(async () => {
+    setLostDevice(null);
+    await stop();
+    if (isHybrid) stopHybrid();
+    if (isMultiCamera) stopMultiCamera();
+    // Sempre um novo segmento: chunkCount pode ainda não incluir o último chunk salvo.
+    beginNewSegment();
+    await startWithSpeechNotice();
+  }, [stop, isHybrid, stopHybrid, isMultiCamera, stopMultiCamera, beginNewSegment, startWithSpeechNotice]);
+
+  const handleDeviceLostFinish = useCallback(() => {
+    setLostDevice(null);
+    setShowStopModal(true);
+  }, []);
+
 
   return (
     <div className="recording-screen flex h-[calc(100vh-3.5rem)] w-full flex-col overflow-hidden bg-gradient-to-br from-[#0a0f1e] via-[#111827] to-[#0a0f1e]">
@@ -593,6 +647,7 @@ export const RecordingScreen = ({
               onPause={pause}
               onResume={resume}
               onStop={handleStop}
+              canFinish={chunkCount > 0}
             />
           </div>
         </div>
@@ -776,6 +831,23 @@ export const RecordingScreen = ({
           </div>
         </div>
       )}
+
+      {/* Device lost modal */}
+      <Modal
+        open={lostDevice !== null}
+        onClose={handleDeviceLostFinish}
+        title={lostDevice ? DEVICE_LOSS_MESSAGES[lostDevice].title : ""}
+        confirmLabel="Retomar"
+        cancelLabel="Encerrar Gravação"
+        onConfirm={handleDeviceLostResume}
+        destructive
+      >
+        <p>{lostDevice && DEVICE_LOSS_MESSAGES[lostDevice].description}</p>
+        <p className="mt-2 text-text-muted">
+          Reconecte o dispositivo e clique em Retomar para continuar em um novo trecho, ou encerre para enviar o que já foi gravado.
+          {isHybrid && " Ao retomar, será preciso selecionar a janela do Teams novamente."}
+        </p>
+      </Modal>
 
       {/* Screen capture cancelled modal */}
       <Modal

@@ -10,9 +10,21 @@ interface UseMediaRecorderOptions {
   microphoneId?: string | null;
   /** For hybrid mode: provide a pre-built stream (from combineStreams) */
   externalStream?: MediaStream | null;
+  /**
+   * Fontes reais de um stream composto. As trilhas do canvas e do AudioContext nunca
+   * terminam, então a queda de um dispositivo só aparece nestas.
+   */
+  monitoredStreams?: MediaStream[];
   onChunk: (blob: Blob) => void;
   onError?: (error: string) => void;
+  /**
+   * "audio" ou "video": o gravador segue com o que restou (o Chromium continua gravando
+   * sem a trilha perdida). "all": o gravador parou sozinho.
+   */
+  onDeviceLost?: (kind: DeviceLossKind) => void;
 }
+
+export type DeviceLossKind = "audio" | "video" | "all";
 
 interface MediaRecorderState {
   status: RecordingStatus;
@@ -24,8 +36,10 @@ export const useMediaRecorder = ({
   cameraId,
   microphoneId,
   externalStream,
+  monitoredStreams,
   onChunk,
   onError,
+  onDeviceLost,
 }: UseMediaRecorderOptions) => {
   const [state, setState] = useState<MediaRecorderState>({
     status: "idle",
@@ -39,6 +53,7 @@ export const useMediaRecorder = ({
   const startTimeRef = useRef<number>(0);
   const pausedElapsedRef = useRef<number>(0);
   const ownsStreamRef = useRef(false);
+  const stopMonitoringRef = useRef<(() => void) | null>(null);
 
   const getCodec = () => {
     if (MediaRecorder.isTypeSupported(RECORDING.PREFERRED_CODEC)) {
@@ -130,6 +145,32 @@ export const useMediaRecorder = ({
         onError?.("Erro no MediaRecorder. Verifique os dispositivos.");
       };
 
+      const handleTrackEnded = (event: Event) => {
+        onDeviceLost?.((event.target as MediaStreamTrack).kind as "audio" | "video");
+      };
+      const monitoredTracks = new Set([
+        ...stream.getTracks(),
+        ...(monitoredStreams ?? []).flatMap((source) => source.getTracks()),
+      ]);
+      monitoredTracks.forEach((track) => track.addEventListener("ended", handleTrackEnded));
+      stopMonitoringRef.current = () => {
+        monitoredTracks.forEach((track) => track.removeEventListener("ended", handleTrackEnded));
+        stopMonitoringRef.current = null;
+      };
+
+      // stop() troca este handler, então aqui o gravador parou sem ninguém pedir.
+      recorder.onstop = () => {
+        stopMonitoringRef.current?.();
+        stopTimer();
+        if (ownsStreamRef.current) {
+          streamRef.current?.getTracks().forEach((t) => t.stop());
+        }
+        streamRef.current = null;
+        recorderRef.current = null;
+        setState((s) => ({ ...s, status: "stopped", stream: null }));
+        onDeviceLost?.("all");
+      };
+
       recorder.start(RECORDING.CHUNK_INTERVAL_MS);
       pausedElapsedRef.current = 0;
       startTimer();
@@ -144,7 +185,17 @@ export const useMediaRecorder = ({
             : "Erro ao iniciar gravação.";
       onError?.(msg);
     }
-  }, [cameraId, microphoneId, externalStream, onChunk, onError, startTimer]);
+  }, [
+    cameraId,
+    microphoneId,
+    externalStream,
+    monitoredStreams,
+    onChunk,
+    onError,
+    onDeviceLost,
+    startTimer,
+    stopTimer,
+  ]);
 
   const pause = useCallback(() => {
     if (recorderRef.current?.state === "recording") {
@@ -164,6 +215,7 @@ export const useMediaRecorder = ({
   }, [startTimer]);
 
   const stop = useCallback((): Promise<void> => {
+    stopMonitoringRef.current?.();
     return new Promise((resolve) => {
       const recorder = recorderRef.current;
       if (!recorder || recorder.state === "inactive") {
@@ -190,7 +242,9 @@ export const useMediaRecorder = ({
   // Cleanup on unmount: garante que câmera/mic são liberados se o componente desmontar inesperadamente
   useEffect(() => {
     return () => {
+      stopMonitoringRef.current?.();
       if (recorderRef.current && recorderRef.current.state !== "inactive") {
+        recorderRef.current.onstop = null;
         recorderRef.current.stop();
       }
       if (ownsStreamRef.current) {

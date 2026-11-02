@@ -8,6 +8,8 @@ interface RecordingControlsProps {
   onPause: () => void;
   onResume: () => void;
   onStop: () => void;
+  /** Mostra "Encerrar" com a gravação parada: há trechos salvos para enviar. */
+  canFinish?: boolean;
 }
 
 // SVG Icons
@@ -41,6 +43,7 @@ export const RecordingControls = ({
   onPause,
   onResume,
   onStop,
+  canFinish = false,
 }: RecordingControlsProps) => {
   return (
     <div className="flex items-center gap-3">
@@ -89,13 +92,23 @@ export const RecordingControls = ({
       )}
 
       {status === "stopped" && (
-        <ControlButton
-          label="Iniciar Nova Gravação"
-          icon={<RecordIcon />}
-          variant="record"
-          onClick={onStart}
-          size="lg"
-        />
+        <>
+          <ControlButton
+            label="Iniciar Nova Gravação"
+            icon={<RecordIcon />}
+            variant="record"
+            onClick={onStart}
+            size="lg"
+          />
+          {canFinish && (
+            <ControlButton
+              label="Encerrar"
+              icon={<StopIcon />}
+              variant="neutral"
+              onClick={onStop}
+            />
+          )}
+        </>
       )}
     </div>
   );
