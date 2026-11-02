@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const getSessionOrErrorMock = vi.fn();
 const countMock = vi.fn();
 const findManyMock = vi.fn();
+const createMock = vi.fn();
 
 vi.mock("@/lib/api-auth", () => ({
   getSessionOrError: (...args: unknown[]) => getSessionOrErrorMock(...args),
@@ -13,11 +14,12 @@ vi.mock("@/lib/db", () => ({
     gravacao: {
       count: (...args: unknown[]) => countMock(...args),
       findMany: (...args: unknown[]) => findManyMock(...args),
+      create: (...args: unknown[]) => createMock(...args),
     },
   },
 }));
 
-import { GET } from "./route";
+import { GET, POST } from "./route";
 
 const makeRequest = (query = "") =>
   ({ nextUrl: new URL(`http://localhost/api/gravacoes${query}`) }) as never;
@@ -75,5 +77,43 @@ describe("GET /api/gravacoes: escopo da listagem", () => {
         numeroProcesso: { contains: "123", mode: "insensitive" },
       },
     });
+  });
+});
+
+describe("POST /api/gravacoes: id enviado pelo cliente", () => {
+  const postRequest = (body: unknown) => ({ json: async () => body }) as never;
+  const metadata = { numeroProcesso: "0001234-56.2026.4.01.3400" };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    createMock.mockResolvedValue({ id: "gravacao-1" });
+    loginAs({ id: "s1", role: "SERVIDOR", vara: "3ª Vara" });
+  });
+
+  it.each(["../../../../tmp/fora", "a/b", "a\\b", "..", 123, "x".repeat(101)])(
+    "rejeita o id %j, que iria parar no caminho do arquivo",
+    async (id) => {
+      const res = await POST(postRequest({ id, metadata, modo: "PRESENCIAL" }));
+
+      expect(res.status).toBe(400);
+      expect(createMock).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(["grav-1767225600000-abc123", "e2e-grav-3f2b8c1e-9d4a-4f6b-8a2e-1c5d7e9f0a1b"])(
+    "aceita o id %j, no formato gerado pelo sistema",
+    async (id) => {
+      const res = await POST(postRequest({ id, metadata, modo: "PRESENCIAL" }));
+
+      expect(res.status).toBe(200);
+      expect(createMock.mock.calls[0][0].data.id).toBe(id);
+    }
+  );
+
+  it("aceita a criação sem id", async () => {
+    const res = await POST(postRequest({ metadata, modo: "PRESENCIAL" }));
+
+    expect(res.status).toBe(200);
+    expect(createMock.mock.calls[0][0].data).not.toHaveProperty("id");
   });
 });

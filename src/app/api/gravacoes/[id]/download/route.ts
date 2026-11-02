@@ -5,10 +5,10 @@ import path from "path";
 import { getSessionOrError } from "@/lib/api-auth";
 import { assertGravacaoAccess } from "@/lib/gravacao-access";
 import { prisma } from "@/lib/db";
+import { resolveUploadPath } from "@/lib/upload-path";
 import { Readable } from "stream";
 import { apiError } from "@/lib/api-response";
 
-const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(process.cwd(), "uploads");
 const PJE_MAX_OUTPUT_SIZE_BYTES = 300 * 1024 * 1024;
 
 function getVideoHeaders(filePath: string) {
@@ -48,7 +48,10 @@ export async function GET(req: NextRequest, context: RouteContext) {
     return apiError("Arquivo não disponível. A gravação não foi finalizada.", 404);
   }
 
-  const filePath = path.join(UPLOAD_DIR, gravacao.caminhoArquivo);
+  const filePath = resolveUploadPath(gravacao.caminhoArquivo);
+  if (!filePath) {
+    return apiError("Arquivo não encontrado no servidor.", 404);
+  }
   const { contentType, extension } = getVideoHeaders(filePath);
 
   let fileStat;

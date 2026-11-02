@@ -139,6 +139,30 @@ describe("API /api/gravacoes/[id]/transcricao", () => {
     expect(json.message).toBeTruthy();
   });
 
+  it("POST rejeita caminho fora de UPLOAD_DIR sem iniciar a transcrição", async () => {
+    findUniqueMock.mockResolvedValue({
+      id: "gravacao-1",
+      userId: "user-1",
+      vara: null,
+      status: "FINALIZADA",
+      caminhoArquivo: "../../.env",
+      transcricaoStatus: "PENDENTE",
+      transcricaoAtualizadoEm: null,
+      numeroProcesso: "0001234-56.2026.4.01.3400",
+      classeProcessual: null,
+      partes: null,
+      nomeJuiz: null,
+      tipoAudiencia: null,
+      dataAudiencia: null,
+    });
+
+    const res = await POST({} as never, makeContext());
+
+    expect(res.status).toBe(400);
+    expect(updateMock).not.toHaveBeenCalled();
+    expect(transcribeMock).not.toHaveBeenCalled();
+  });
+
   it("POST retorna 500 quando validação do runtime falha", async () => {
     findUniqueMock.mockResolvedValue({
       id: "gravacao-1",
