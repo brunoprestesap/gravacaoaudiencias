@@ -62,7 +62,6 @@ test.describe("Consulta de gravações", () => {
 
   test("paginação aparece com 25 gravações", async ({ page }) => {
     for (let i = 0; i < 25; i += 1) {
-      // eslint-disable-next-line no-await-in-loop
       await seedGravacao({
         ownerUsername: "servidor1",
         numeroProcesso: `PAGE-${String(i).padStart(3, "0")}`,
