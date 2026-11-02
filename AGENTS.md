@@ -12,7 +12,7 @@ Monólito **Next.js 16** (App Router) para gravação e consulta de audiências 
 
 ## Build approach
 
-<TBD, set by /scope>
+Tracer Bullet (cada item é feito de ponta a ponta e provado no app real).
 
 ## Requisitos de ambiente
 

@@ -28,10 +28,10 @@ _Isto são recomendações para manter o trabalho em ordem, não obrigações. P
 | 7 | Limpeza apagando falas legítimas | Correções concluídas | done |
 | 8 | Transcrição ao vivo e papel inferido | Correções concluídas | done |
 | 9 | Conferir caminhos suspeitos nos ambientes | Fatia 1 | planned |
-| 10 | Validação na sala piloto | Fatia 1 | planned |
-| 11 | Limite de 300 MB do PJe em gravações longas | Fatia 1 | planned |
-| 12 | Duração correta após retomar | Fatia 2 | planned |
-| 13 | Conversões longas interrompidas pelo limite de saída | Fatia 2 | planned |
+| 10 | Duração correta após retomar | Fatia 1 | done |
+| 11 | Conversões longas interrompidas pelo limite de saída | Fatia 1 | planned |
+| 12 | Validação na sala piloto | Fatia 2 | planned |
+| 13 | Limite de 300 MB do PJe em gravações longas | Fatia 2 | planned |
 | 14 | Transcrição travada ou duplicada | Fatia 3 | planned |
 | 15 | Limite de processos FFmpeg na transcrição | Fatia 3 | planned |
 | 16 | Reprocessar gravações antigas | Fatia 3 | planned |
@@ -101,9 +101,9 @@ Regras exigem evidência de loop, e números ditados não colapsam. PR #10.
 ### 8. Transcrição ao vivo e papel inferido · done
 Quatro defeitos corrigidos, com a função desligada por padrão. PR #11.
 
-## Fatia 1: Provar o que foi corrigido e decidir o limite do PJe
+## Fatia 1: Corrigir antes do piloto
 
-Vem primeiro porque o resultado pode mudar a prioridade de tudo abaixo.
+Uma conferência rápida e duas correções pequenas, para o piloto medir o produto sem tropeçar em falhas já conhecidas.
 
 ### 9. Conferir caminhos suspeitos nos ambientes
 Tarefa de operação, sem código. O PR #4 fechou a falha, mas um registro antigo pode indicar uma tentativa de ataque.
@@ -114,7 +114,21 @@ Tarefa de operação, sem código. O PR #4 fechou a falha, mas um registro antig
   WHERE "caminhoArquivo" LIKE '%..%' OR id !~ '^[A-Za-z0-9_-]{1,100}$';
   ```
 
-### 10. Validação na sala piloto
+### 10. Duração correta após retomar · done
+Ao retomar, o timer volta a zero e a `duracao` salva conta só o último trecho. Esse valor também alimenta o cálculo de bitrate, então o arquivo pode sair maior que o previsto. Ficou mais frequente com o botão Retomar do item 3.
+**Done when:** depois de retomar, o timer, a `duracao` salva e o cálculo de bitrate consideram todos os trechos.
+- [x] Corrigir: `/debug duração após retomar`
+
+### 11. Conversões longas interrompidas pelo limite de saída
+`execFileAsync` em `src/lib/upload-ffmpeg.ts` usa o `maxBuffer` padrão de 1 MB. O FFmpeg roda sem `-nostats` e escreve progresso sem parar, então um passo com cerca de 1h30 de relógio pode ser encerrado no meio (estimativa). Ainda não foi reproduzido.
+**Done when:** uma conversão longa termina sem ser interrompida pelo limite de saída, com teste que prove isso.
+- [ ] Reproduzir e corrigir: `/debug conversões longas`
+
+## Fatia 2: Provar o que foi corrigido e decidir o limite do PJe
+
+O resultado pode mudar a prioridade de tudo abaixo.
+
+### 12. Validação na sala piloto
 Os testes usaram dispositivos falsos. Só o hardware real prova as correções de gravação, que são a hipótese central do produto.
 **Done when:** os quatro cenários abaixo rodaram com hardware real, e cada falha virou um item neste scope.
 - [ ] 2 horas no modo híbrido com o Teams na frente, encerrando o compartilhamento no meio
@@ -122,22 +136,10 @@ Os testes usaram dispositivos falsos. Só o hardware real prova as correções d
 - [ ] Conferir se o armazenamento persistente é concedido no perfil real do navegador
 - [ ] Aba oculta por mais de 5 minutos, conferindo os quadros gravados
 
-### 11. Limite de 300 MB do PJe em gravações longas · needs a decision
+### 13. Limite de 300 MB do PJe em gravações longas · needs a decision
 O piso de 500 kbps impede que gravações acima de cerca de 70 minutos caibam em 300 MB. A meta do produto é 2 horas, que dá cerca de 510 MB. As opções são aceitar o aviso atual, dividir em partes ou reduzir mais a qualidade. Código em `src/lib/upload-encoding.ts`.
 **Done when:** uma gravação de 2 horas tem um caminho claro até o PJe, e o usuário sabe o que fazer com ela.
 - [ ] Design it (spec): `/architect limite de 300 MB do PJe`
-
-## Fatia 2: Gravação e upload
-
-### 12. Duração correta após retomar
-Ao retomar, o timer volta a zero e a `duracao` salva conta só o último trecho. Esse valor também alimenta o cálculo de bitrate, então o arquivo pode sair maior que o previsto. Ficou mais frequente com o botão Retomar do item 3.
-**Done when:** depois de retomar, o timer, a `duracao` salva e o cálculo de bitrate consideram todos os trechos.
-- [ ] Corrigir: `/debug duração após retomar`
-
-### 13. Conversões longas interrompidas pelo limite de saída
-`execFileAsync` em `src/lib/upload-ffmpeg.ts` usa o `maxBuffer` padrão de 1 MB. O FFmpeg escreve progresso sem parar, então uma conversão longa pode ser encerrada no meio. Ainda não foi reproduzido.
-**Done when:** uma conversão longa termina sem ser interrompida pelo limite de saída, com teste que prove isso.
-- [ ] Reproduzir e corrigir: `/debug conversões longas`
 
 ## Fatia 3: Transcrição
 
