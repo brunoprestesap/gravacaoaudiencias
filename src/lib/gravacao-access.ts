@@ -22,11 +22,26 @@ export function canReadGravacao(
     return false;
   }
 
-  if (user.role === "JUIZ" && user.vara && gravacao.vara !== user.vara) {
+  // Juiz sem vara não tem acesso: a vara é o que delimita o que ele pode ler.
+  if (user.role === "JUIZ" && (!user.vara || gravacao.vara !== user.vara)) {
     return false;
   }
 
   return true;
+}
+
+/**
+ * Filtro de listagem equivalente a `canReadGravacao`, ou `null` quando o usuário
+ * não pode ver nenhuma gravação. Não use `{ vara: null }` para esse caso: casaria
+ * com as gravações sem vara.
+ */
+export function gravacaoListScope(
+  user: GravacaoAccessUser
+): { userId: string } | { vara: string } | null {
+  if (user.role === "SERVIDOR") {
+    return { userId: user.id };
+  }
+  return user.vara ? { vara: user.vara } : null;
 }
 
 export function canServidorWriteGravacao(
