@@ -10,6 +10,11 @@ import {
   MaritacaApiError,
   MaritacaConfigError,
 } from "@/lib/termo-audiencia/maritaca";
+import {
+  STALE_TERMO_REASON,
+  STALE_TERMO_THRESHOLD_MS,
+  isStaleTermoProcessando,
+} from "@/lib/termo-recovery";
 import type { ProcessMetadata } from "@/types/recording";
 
 interface RouteContext {
@@ -36,6 +41,7 @@ const POST_SELECT = {
   transcricaoTexto: true,
   transcricaoSegmentos: true,
   termoStatus: true,
+  termoAtualizadoEm: true,
   numeroProcesso: true,
   classeProcessual: true,
   partes: true,
@@ -137,6 +143,25 @@ export async function GET(_req: NextRequest, context: RouteContext) {
     return apiError("Gravação não encontrada.", 404);
   }
 
+  // Sem isto, a tela ficaria em PROCESSANDO sem botão para tentar de novo.
+  if (
+    gravacao.termoStatus === "PROCESSANDO"
+    && isStaleTermoProcessando(gravacao.termoAtualizadoEm)
+  ) {
+    const now = new Date();
+    await prisma.gravacao.updateMany({
+      where: {
+        id: gravacao.id,
+        termoStatus: "PROCESSANDO",
+        termoAtualizadoEm: { lte: new Date(now.getTime() - STALE_TERMO_THRESHOLD_MS) },
+      },
+      data: { termoStatus: "ERRO", termoErro: STALE_TERMO_REASON, termoAtualizadoEm: now },
+    });
+    gravacao.termoStatus = "ERRO";
+    gravacao.termoErro = STALE_TERMO_REASON;
+    gravacao.termoAtualizadoEm = now;
+  }
+
   return apiOk({
     termo: {
       status: gravacao.termoStatus,
@@ -185,7 +210,10 @@ export async function POST(_req: NextRequest, context: RouteContext) {
     return apiError("Transcrição vazia: nada para o termo de audiência.", 400);
   }
 
-  if (gravacao.termoStatus === "PROCESSANDO") {
+  if (
+    gravacao.termoStatus === "PROCESSANDO"
+    && !isStaleTermoProcessando(gravacao.termoAtualizadoEm)
+  ) {
     return apiOk({
       termo: { status: "PROCESSANDO" },
       message: "O termo desta gravação já está em geração.",

@@ -4,7 +4,9 @@ export async function register() {
   try {
     const { recoverStuckTranscriptions } = await import("@/lib/transcricao-recovery");
     await recoverStuckTranscriptions();
+    const { recoverStuckTermos } = await import("@/lib/termo-recovery");
+    await recoverStuckTermos();
   } catch (err) {
-    console.error("[instrumentation] falha ao recuperar transcrições zumbi no boot:", err);
+    console.error("[instrumentation] falha ao recuperar transcrições e termos zumbis no boot:", err);
   }
 }

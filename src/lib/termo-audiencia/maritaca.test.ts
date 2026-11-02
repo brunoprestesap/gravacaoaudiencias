@@ -1,3 +1,5 @@
+import http from "http";
+import type { AddressInfo } from "net";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   chamarMaritacaTermo,
@@ -148,5 +150,56 @@ describe("chamarMaritacaTermo", () => {
     await expect(
       chamarMaritacaTermo({ systemPrompt: "s", userPrompt: "u" })
     ).rejects.toBeInstanceOf(MaritacaApiError);
+  });
+});
+
+describe("chamarMaritacaTermo: Maritaca que não responde", () => {
+  const params = { systemPrompt: "s", userPrompt: "u" };
+
+  const withHangingServer = async (
+    handler: http.RequestListener,
+    run: (baseUrl: string) => Promise<void>
+  ) => {
+    const server = http.createServer(handler);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      await run(`http://127.0.0.1:${(server.address() as AddressInfo).port}`);
+    } finally {
+      server.closeAllConnections();
+      await new Promise((resolve) => server.close(resolve));
+    }
+  };
+
+  beforeEach(() => {
+    globalThis.fetch = originalFetch;
+    process.env.MARITACA_API_KEY = "k";
+    process.env.MARITACA_TIMEOUT_MS = "100";
+  });
+
+  it("desiste quando o servidor nunca responde", async () => {
+    await withHangingServer(
+      () => {},
+      async (baseUrl) => {
+        process.env.MARITACA_BASE_URL = baseUrl;
+        const error = await chamarMaritacaTermo(params).catch((e) => e);
+        expect(error).toBeInstanceOf(MaritacaApiError);
+        expect(error.message).toContain("não respondeu");
+      }
+    );
+  });
+
+  it("desiste quando o servidor para no meio da resposta", async () => {
+    await withHangingServer(
+      (_req, res) => {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.write('{"choices":');
+      },
+      async (baseUrl) => {
+        process.env.MARITACA_BASE_URL = baseUrl;
+        const error = await chamarMaritacaTermo(params).catch((e) => e);
+        expect(error).toBeInstanceOf(MaritacaApiError);
+        expect(error.message).toContain("não respondeu");
+      }
+    );
   });
 });

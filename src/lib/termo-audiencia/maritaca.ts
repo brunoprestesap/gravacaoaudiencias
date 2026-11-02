@@ -23,6 +23,12 @@ interface MaritacaResponse {
   choices?: MaritacaChoice[];
 }
 
+function timeoutMessage(err: unknown): string | null {
+  return err instanceof Error && err.name === "TimeoutError"
+    ? "A Maritaca não respondeu dentro do tempo limite."
+    : null;
+}
+
 function buildRequestBody(model: string, params: ChamarMaritacaTermoParams) {
   return {
     model,
@@ -56,7 +62,8 @@ async function postChatCompletion(
     });
   } catch (err) {
     throw new MaritacaApiError(
-      `Falha de rede ao chamar Maritaca: ${err instanceof Error ? err.message : String(err)}`
+      timeoutMessage(err) ??
+        `Falha de rede ao chamar Maritaca: ${err instanceof Error ? err.message : String(err)}`
     );
   }
 }
@@ -76,7 +83,8 @@ async function extractContent(response: Response): Promise<string> {
     payload = (await response.json()) as MaritacaResponse;
   } catch (err) {
     throw new MaritacaApiError(
-      `Resposta da Maritaca não é JSON válido: ${err instanceof Error ? err.message : String(err)}`
+      timeoutMessage(err) ??
+        `Resposta da Maritaca não é JSON válido: ${err instanceof Error ? err.message : String(err)}`
     );
   }
   const content = payload.choices?.[0]?.message?.content;
@@ -108,7 +116,10 @@ export async function chamarMaritacaTermo(
 ): Promise<TermoEstruturado> {
   const config = getMaritacaConfig();
   const body = buildRequestBody(config.model, params);
-  const response = await postChatCompletion(config, body, params.signal);
+  // O timeout vale também para a leitura do corpo, que usa o mesmo signal.
+  const timeout = AbortSignal.timeout(config.timeoutMs);
+  const signal = params.signal ? AbortSignal.any([params.signal, timeout]) : timeout;
+  const response = await postChatCompletion(config, body, signal);
   await ensureSuccessful(response);
   const content = await extractContent(response);
   return parseTermoContent(content);
