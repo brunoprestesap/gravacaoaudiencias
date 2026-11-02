@@ -278,3 +278,24 @@ describe("harmonizeRolesByUpstreamSpeaker", () => {
     expect(out.every((s) => s.role !== undefined)).toBe(true);
   });
 });
+
+describe("diarizeSegmentsByRole: papel enviado pelo cliente", () => {
+  const live = (role?: "DESCONHECIDO" | "PARTE") => ({
+    id: "s1",
+    text: "Declaro aberta a audiência, com a palavra o doutor.",
+    offsetMs: 0,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    role,
+    confidence: role ? 0.28 : undefined,
+  });
+
+  it("DESCONHECIDO não impede a inferência do servidor", () => {
+    const [segment] = diarizeSegmentsByRole([live("DESCONHECIDO")]);
+    expect(segment.role).toBe("JUIZ");
+    expect(segment.confidence).toBeGreaterThan(0.28);
+  });
+
+  it("papel explícito continua valendo", () => {
+    expect(diarizeSegmentsByRole([live("PARTE")])[0].role).toBe("PARTE");
+  });
+});

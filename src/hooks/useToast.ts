@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 import { useToastStore } from "@/stores/toast-store";
 import { TOAST_DURATIONS } from "@/lib/constants";
 
@@ -17,11 +17,15 @@ export const useToast = () => {
     [addToast, removeToast]
   );
 
-  return {
-    success: (msg: string) => toast("success", msg),
-    info: (msg: string) => toast("info", msg),
-    warning: (msg: string) => toast("warning", msg),
-    error: (msg: string) => toast("error", msg),
-    dismiss: removeToast,
-  };
+  // Estável entre renders: o retorno entra em dependências de efeitos e callbacks.
+  return useMemo(
+    () => ({
+      success: (msg: string) => toast("success", msg),
+      info: (msg: string) => toast("info", msg),
+      warning: (msg: string) => toast("warning", msg),
+      error: (msg: string) => toast("error", msg),
+      dismiss: removeToast,
+    }),
+    [toast, removeToast]
+  );
 };
