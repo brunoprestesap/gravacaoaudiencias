@@ -115,14 +115,16 @@ Pipeline aplicado a **todos os motores** em [`src/lib/transcription-local/transc
 
 1. **`mergeConsecutiveSameSpeakerSegments`** — junta segmentos vizinhos com o mesmo `speakerId` upstream (Chirp 3 fragmenta a cada ~15s). Não faz nada em motores sem `speakerId`.
 2. **`collapseRepetitionsWithinSegments`** — colapsa ciclos repetidos dentro do texto de um mesmo segmento.
-3. **`filterWhisperHallucinations`** — remove segmentos cujo texto inteiro casa com padrões conhecidos de hallucination do Whisper:
+3. **`filterWhisperHallucinations`** — remove segmentos que são a frase típica de hallucination do Whisper. Os padrões exigem a frase completa, porque palavras soltas como "curta", "comente" ou "obrigado" também são fala real:
    - Despedidas de YouTube ("obrigado por assistir", "até o próximo vídeo", "curtam e se inscrevam")
    - Créditos de legendagem ("Legendas pela comunidade Amara.org", "Tradução e legendagem por...")
    - Marcadores não-fala ("[música]", "(applause)", "♪")
    - Vazamentos do corpus em inglês ("Thank you for watching", "Subscribe to my channel")
    - Origem dessas frases: corpus de treino do Whisper inclui muito subtítulo de YouTube; em silêncio prolongado o decoder regride para essas âncoras.
-4. **`collapseHallucinationCycles`** — colapsa ciclos repetidos entre segmentos (A A A → A; A B C A B C → A B C).
-5. **`collapseNearDuplicateLongSegments`** — remove resíduos por similaridade Jaccard de palavras (mantém respostas curtas legítimas como "Sim"/"Não").
+4. **`collapseHallucinationCycles`** — colapsa ciclos repetidos entre segmentos: pelo menos 3 repetições, ou 4 se o ciclo tem menos de 5 palavras. Menos que isso é tratado como fala real ("Sim." em duas respostas).
+5. **`collapseNearDuplicateLongSegments`** — remove resíduos por similaridade Jaccard de palavras, só em 3 ou mais segmentos longos imediatamente seguidos, em que um texto contém o outro.
+
+Critério do pipeline: na dúvida, o segmento fica. Um resíduo de loop aparece para quem revisa; uma fala apagada não pode ser recuperada. A etapa 2 nunca colapsa sequências só de números, que podem ser um CPF ditado.
 
 No motor `whisper` (whisper.cpp) também é passada a flag `--suppress-nst` que suprime tokens não-fala já no decoder, reduzindo a geração de hallucinations cobertas pelo filtro acima.
 

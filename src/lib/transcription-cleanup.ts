@@ -1,7 +1,11 @@
 import type { TranscriptSegment } from "@/lib/transcription-diarization";
 
 const DEFAULT_MAX_CYCLE_LEN = 5;
-const DEFAULT_MIN_REPEATS = 2;
+// Fala real repete pouco ("Sim." em duas respostas, uma pergunta que não foi ouvida);
+// um loop repete sem parar. Quanto mais curto o trecho, mais repetições são exigidas.
+const MIN_REPEATS_LONG_CYCLE = 3;
+const MIN_REPEATS_SHORT_CYCLE = 4;
+const LONG_CYCLE_MIN_WORDS = 5;
 
 function normalizeText(text: string | undefined): string {
   if (!text) return "";
@@ -17,21 +21,23 @@ function normalizeText(text: string | undefined): string {
 //   - github.com/openai/whisper/discussions/679
 //   - github.com/openai/whisper/discussions/1606
 //   - reports da comunidade Whisper.cpp em PT-BR
+//
+// Registro judicial: na dúvida, o segmento fica. Os padrões exigem a frase típica
+// inteira, porque "curta", "comente" ou "obrigado" também são fala real.
 const WHISPER_HALLUCINATION_PATTERNS: RegExp[] = [
   // Despedidas de YouTube
-  /^(muito\s+)?obrigad[oa]s?\s+(a\s+todos\s+)?(por\s+)?(assistir(em)?|ver|verem)/i,
-  /^obrigad[oa]s?\.?$/i,
-  /at[ée]\s+(o|a)\s+pr[óo]xim[oa]\s+(v[íi]deo|epis[óo]dio|encontro)/i,
-  /(curt(am|a)|inscrev[ae]m?-?se|deixe[m]?\s+seu\s+like|comente[m]?)\b/i,
+  /^(muito\s+)?obrigad[oa]s?\s+(a\s+todos\s+)?por\s+(assistir(em)?|ver(em)?\s+(o|este|esse)\s+v[íi]deo)(\s+(ao|o|este|esse)\s+v[íi]deo)?[\s.!?…]*$/i,
+  /^at[ée]\s+(o|a)\s+pr[óo]xim[oa]\s+(v[íi]deo|epis[óo]dio)[\s.!?…]*$/i,
+  /\b(curtam?\s+((o|este|esse)\s+)?v[íi]deo|curtam?\s+e\s+(se\s+)?inscrev|inscrev[ae]m?-?se\s+no\s+canal|deixem?\s+(o\s+|seu\s+)like|comentem?\s+(aqui\s+)?abaixo)/i,
   // Créditos de legendagem (corpus de treino)
   /legendas?\s+(da|pela|por)\s+comunidade\s+amara/i,
   /^as\s+legendas\s+em\s+portugu[êe]s/i,
-  /tradu(ç|c)[ãa]o\s+e\s+legenda(gem|s)\s+(de|por)/i,
-  /sub(títul|titul)os?\s+(por|de|pela)\s+\w+/i,
-  // Marcadores não-fala (mesmo com --suppress-nst alguns sobrevivem)
-  /^[♪♫]+/,
-  /^\[\s*(m[úu]sica|aplausos?|risos?|silêncio|barulho|tosse|music|applause|laughter|silence)\s*\]/i,
-  /^\(\s*(m[úu]sica|aplausos?|risos?|silêncio|barulho|music|applause|laughter|silence)\s*\)/i,
+  /^tradu(ç|c)[ãa]o\s+e\s+legenda(gem|s)\s+(de|por)/i,
+  /^sub(títul|titul)os?\s+(por|de|pela)\s+\w+/i,
+  // Marcadores não-fala (mesmo com --suppress-nst alguns sobrevivem), sem nenhuma fala junto
+  /^[♪♫\s]+$/,
+  /^(\[\s*(m[úu]sica|aplausos?|risos?|silêncio|barulho|tosse|music|applause|laughter|silence)\s*\][\s.]*)+$/i,
+  /^(\(\s*(m[úu]sica|aplausos?|risos?|silêncio|barulho|music|applause|laughter|silence)\s*\)[\s.]*)+$/i,
   // Inglês (corpus de treino vaza)
   /^thank\s+you\s+for\s+watching/i,
   /^subscribe\s+(to\s+)?(my\s+|the\s+)?channel/i,
@@ -68,8 +74,8 @@ export interface CollapseCyclesOptions {
  * conteúdo real.
  *
  * Para cada posição, busca o maior ciclo (1..maxCycleLen) que se repete
- * pelo menos minRepeats vezes. Quando encontra, emite UM ciclo e pula o
- * resto. Cobre tanto repetição direta (A A A → A) quanto ciclos
+ * o suficiente: 3 vezes, ou 4 se o ciclo tem menos de 5 palavras (ou `minRepeats`,
+ * se informado). Quando encontra, emite UM ciclo e pula o resto. Cobre tanto repetição direta (A A A → A) quanto ciclos
  * (A B C A B C → A B C).
  */
 export function collapseHallucinationCycles(
@@ -77,7 +83,6 @@ export function collapseHallucinationCycles(
   opts: CollapseCyclesOptions = {}
 ): TranscriptSegment[] {
   const maxCycleLen = opts.maxCycleLen ?? DEFAULT_MAX_CYCLE_LEN;
-  const minRepeats = opts.minRepeats ?? DEFAULT_MIN_REPEATS;
 
   if (segments.length < 2) return segments;
 
@@ -90,9 +95,13 @@ export function collapseHallucinationCycles(
     let bestEnd = i;
 
     for (let k = 1; k <= maxCycleLen; k++) {
+      const unit = norms.slice(i, i + k);
+      if (unit.every((t) => t.length === 0)) continue;
+      const unitWords = unit.join(" ").split(" ").filter(Boolean).length;
+      const minRepeats =
+        opts.minRepeats ??
+        (unitWords >= LONG_CYCLE_MIN_WORDS ? MIN_REPEATS_LONG_CYCLE : MIN_REPEATS_SHORT_CYCLE);
       if (i + k * minRepeats > segments.length) continue;
-      const isEmptyPattern = norms.slice(i, i + k).every((t) => t.length === 0);
-      if (isEmptyPattern) continue;
 
       let j = i + k;
       while (j + k <= segments.length) {
@@ -136,13 +145,22 @@ function jaccardWords(a: string[], b: string[]): number {
 }
 
 export interface CollapseNearDuplicatesOptions {
-  /** Quantos segmentos longos anteriores considerar para detectar similaridade. */
-  windowSize?: number;
   /** Threshold de Jaccard de palavras (0..1) para considerar near-duplicate. */
   threshold?: number;
   /** Tamanho mínimo (em palavras) para o segmento ser elegível à comparação.
    * Segmentos curtos (Sim/Não/etc.) são sempre preservados. */
   minWords?: number;
+  /** Quantos segmentos seguidos parecidos caracterizam um loop. */
+  minRun?: number;
+}
+
+function isNearDuplicate(a: string[], b: string[], threshold: number): boolean {
+  if (jaccardWords(a, b) < threshold) return false;
+  // Um dos textos precisa conter o outro. Se cada um tem palavra própria
+  // ("em 2010" / "em 2011"), são falas diferentes, não um loop.
+  const sa = new Set(a);
+  const sb = new Set(b);
+  return a.every((w) => sb.has(w)) || b.every((w) => sa.has(w));
 }
 
 /**
@@ -152,19 +170,18 @@ export interface CollapseNearDuplicatesOptions {
  * falou para X para Y" / "Ele falou para X para Y para Z" — todos prefixos
  * uns dos outros).
  *
- * Para cada segmento longo (>= minWords palavras), compara via Jaccard de
- * palavras com os últimos `windowSize` segmentos longos já emitidos.
- * Se a similaridade ultrapassar `threshold`, descarta. Segmentos curtos
- * (Sim/Não/respostas monossilábicas) são sempre mantidos para não perder
- * conteúdo legítimo de respostas repetidas a perguntas distintas.
+ * Só age em uma sequência de `minRun` ou mais segmentos longos IMEDIATAMENTE
+ * seguidos e parecidos: mantém o primeiro e descarta o resto. Qualquer fala no
+ * meio interrompe a sequência, pois a mesma resposta a perguntas diferentes
+ * ("Não me recordo disso") é fala real.
  */
 export function collapseNearDuplicateLongSegments(
   segments: TranscriptSegment[],
   opts: CollapseNearDuplicatesOptions = {}
 ): TranscriptSegment[] {
-  const windowSize = opts.windowSize ?? 8;
   const threshold = opts.threshold ?? 0.7;
   const minWords = opts.minWords ?? 5;
+  const minRun = opts.minRun ?? 3;
 
   if (segments.length < 2) return segments;
 
@@ -174,28 +191,26 @@ export function collapseNearDuplicateLongSegments(
       .filter((w) => w.length > 0)
   );
   const out: TranscriptSegment[] = [];
-  const outLongTokens: string[][] = [];
 
-  for (let i = 0; i < segments.length; i++) {
-    const curTokens = tokens[i];
-    if (curTokens.length < minWords) {
-      out.push(segments[i]);
-      continue;
-    }
-
-    let isNearDup = false;
-    const start = Math.max(0, outLongTokens.length - windowSize);
-    for (let j = outLongTokens.length - 1; j >= start; j--) {
-      if (jaccardWords(curTokens, outLongTokens[j]) >= threshold) {
-        isNearDup = true;
-        break;
+  let i = 0;
+  while (i < segments.length) {
+    let end = i + 1;
+    if (tokens[i].length >= minWords) {
+      while (
+        end < segments.length
+        && tokens[end].length >= minWords
+        && isNearDuplicate(tokens[end - 1], tokens[end], threshold)
+      ) {
+        end += 1;
       }
     }
 
-    if (!isNearDup) {
+    if (end - i >= minRun) {
       out.push(segments[i]);
-      outLongTokens.push(curTokens);
+    } else {
+      out.push(...segments.slice(i, end));
     }
+    i = end;
   }
 
   return out;
@@ -203,6 +218,12 @@ export function collapseNearDuplicateLongSegments(
 
 const DEFAULT_INTRA_NGRAM_MAX_LEN = 8;
 const DEFAULT_INTRA_NGRAM_MIN_REPEATS = 3;
+// "muito muito muito" e "não não não" são fala real; loop de 1 ou 2 palavras repete mais.
+const INTRA_SHORT_NGRAM_MAX_LEN = 2;
+const INTRA_SHORT_NGRAM_MIN_REPEATS = 5;
+
+const NUMBER_TOKEN =
+  /^(\d+|zero|um|uma|dois|duas|tr[êe]s|quatro|cinco|seis|sete|oito|nove|dez)[.,;:!?]*$/i;
 
 /**
  * Colapsa repetição imediata de n-gramas DENTRO do texto de uma string.
@@ -214,7 +235,8 @@ const DEFAULT_INTRA_NGRAM_MIN_REPEATS = 3;
  *
  * Para cada n de `maxN` até 1, procura sequências de palavras que se
  * repetem imediatamente >= `minRepeats` vezes e reduz para 1 ocorrência.
- * Mantém pontuação adjacente.
+ * Mantém pontuação adjacente. Sequências só de números nunca são colapsadas, porque
+ * "zero zero zero" pode ser parte de um CPF ou de um número de processo ditado.
  */
 export function collapseRepeatedNgramsInText(
   text: string,
@@ -225,21 +247,30 @@ export function collapseRepeatedNgramsInText(
 
   if (!text) return text;
   const tokens = text.split(/\s+/);
-  if (tokens.length < minRepeats * 1) return text;
+  if (tokens.length < minRepeats) return text;
 
   // Tenta n decrescente para preferir colapsar ciclos longos antes de curtos.
   for (let n = Math.min(maxN, Math.floor(tokens.length / minRepeats)); n >= 1; n--) {
     const out: string[] = [];
     let i = 0;
     let collapsed = false;
+    const requiredRepeats =
+      n <= INTRA_SHORT_NGRAM_MAX_LEN && opts.minRepeats === undefined
+        ? INTRA_SHORT_NGRAM_MIN_REPEATS
+        : minRepeats;
 
     while (i < tokens.length) {
-      if (i + n * minRepeats > tokens.length) {
+      if (i + n * requiredRepeats > tokens.length) {
         out.push(tokens[i]);
         i += 1;
         continue;
       }
       const ngram = tokens.slice(i, i + n).map((t) => t.toLowerCase());
+      if (ngram.every((t) => NUMBER_TOKEN.test(t))) {
+        out.push(tokens[i]);
+        i += 1;
+        continue;
+      }
       let repeats = 1;
       let j = i + n;
       while (j + n <= tokens.length) {
@@ -251,7 +282,7 @@ export function collapseRepeatedNgramsInText(
           break;
         }
       }
-      if (repeats >= minRepeats) {
+      if (repeats >= requiredRepeats) {
         for (let z = 0; z < n; z++) out.push(tokens[i + z]);
         i = j;
         collapsed = true;
