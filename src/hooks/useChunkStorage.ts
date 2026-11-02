@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { openDB, IDBPDatabase } from "idb";
-import { INDEXEDDB } from "@/lib/constants";
+import { INDEXEDDB, RECORDING } from "@/lib/constants";
 import type { ChunkRecord, RecoveryRecord, ProcessMetadata, ModoGravacao } from "@/types/recording";
 
 interface ChunkStorageState {
@@ -40,6 +40,8 @@ export const useChunkStorage = (gravacaoId: string) => {
     lastSavedAt: null,
     error: null,
   });
+  // Estimativa fixa do que já estava salvo ao abrir: chunks novos entram no timer da sessão.
+  const [priorElapsedMs, setPriorElapsedMs] = useState(0);
   const dbRef = useRef<IDBPDatabase | null>(null);
   const chunkIndexRef = useRef(0);
   const segmentIndexRef = useRef(0);
@@ -68,6 +70,7 @@ export const useChunkStorage = (gravacaoId: string) => {
 
           chunkIndexRef.current = maxIndex + 1;
           segmentIndexRef.current = maxSegmentIndex;
+          setPriorElapsedMs(existingChunks.length * RECORDING.CHUNK_INTERVAL_MS);
           setState({
             chunkCount: existingChunks.length,
             totalBytes,
@@ -225,6 +228,7 @@ export const useChunkStorage = (gravacaoId: string) => {
 
   return {
     ...state,
+    priorElapsedMs,
     saveChunk,
     getAllChunks,
     consolidate,

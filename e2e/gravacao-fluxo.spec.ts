@@ -75,6 +75,10 @@ test.describe("Fluxo completo de gravação", () => {
       await confirmStop(page);
       await expect(page).toHaveURL(/\/dashboard$/, { timeout: 60_000 });
       await expectFinalized(numeroProcesso);
+
+      // Um chunk de 5s antes da queda mais ao menos 6s depois de retomar.
+      const row = await getPrisma().gravacao.findFirst({ where: { numeroProcesso } });
+      expect(row?.duracao).toBeGreaterThanOrEqual(11);
     } finally {
       await getPrisma().gravacao.deleteMany({ where: { numeroProcesso } });
     }
