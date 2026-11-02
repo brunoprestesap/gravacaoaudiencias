@@ -37,7 +37,7 @@ describe("collapseHallucinationCycles", () => {
     expect(out.map((s) => s.text)).toEqual(["Por mais?", "Próxima fala"]);
   });
 
-  it("colapsa ciclo de 2 (A B A B A B → A B)", () => {
+  it("colapsa ciclo de 2 quando repete o bastante para ser loop (A B × 4 → A B)", () => {
     const input = [
       seg("Sim", 0, 1000),
       seg("Não", 1000, 2000),
@@ -45,7 +45,9 @@ describe("collapseHallucinationCycles", () => {
       seg("Não", 3000, 4000),
       seg("Sim", 4000, 5000),
       seg("Não", 5000, 6000),
-      seg("Tchau", 6000, 7000),
+      seg("Sim", 6000, 7000),
+      seg("Não", 7000, 8000),
+      seg("Tchau", 8000, 9000),
     ];
     const out = collapseHallucinationCycles(input);
     expect(out.map((s) => s.text)).toEqual(["Sim", "Não", "Tchau"]);
@@ -105,7 +107,7 @@ describe("collapseHallucinationCycles", () => {
       seg("A", 4000, 5000),
       seg("B", 5000, 6000),
     ];
-    const out = collapseHallucinationCycles(input);
+    const out = collapseHallucinationCycles(input, { minRepeats: 2 });
     expect(out.map((s) => s.text)).toEqual(["A", "B"]);
   });
 
@@ -113,7 +115,7 @@ describe("collapseHallucinationCycles", () => {
     const a = seg("X", 0, 1000);
     const b = seg("X", 1000, 2000);
     const c = seg("Y", 2000, 3000);
-    const out = collapseHallucinationCycles([a, b, c]);
+    const out = collapseHallucinationCycles([a, b, c], { minRepeats: 2 });
     expect(out[0]).toBe(a);
     expect(out[1]).toBe(c);
   });
@@ -145,17 +147,18 @@ describe("collapseNearDuplicateLongSegments", () => {
     expect(out[1].text).toBe(input[3].text);
   });
 
-  it("colapsa near-duplicates separados por curtos (cycle residual)", () => {
-    const input = [
-      seg("A senhora gastou quanto para levantar a casa para os filhos?", 0, 3000),
-      seg("Não.", 3000, 4000),
-      seg("para o filho.", 4000, 5000),
-      seg("A senhora gastou quanto para levantar a casa para os filhos?", 5000, 8000),
-      seg("Não.", 8000, 9000),
-      seg("para o filho.", 9000, 10000),
-    ];
-    const out = collapseNearDuplicateLongSegments(input);
-    expect(out.filter((s) => s.text.startsWith("A senhora"))).toHaveLength(1);
+  it("deixa para o colapso de ciclos o loop intercalado com falas curtas", () => {
+    const pergunta = "A senhora gastou quanto para levantar a casa para os filhos?";
+    const input = [pergunta, "Não.", "para o filho."]
+      .concat(pergunta, "Não.", "para o filho.", pergunta, "Não.", "para o filho.")
+      .map((text, i) => seg(text, i * 1000, i * 1000 + 900));
+
+    expect(collapseNearDuplicateLongSegments(input)).toHaveLength(9);
+    expect(collapseHallucinationCycles(input).map((s) => s.text)).toEqual([
+      pergunta,
+      "Não.",
+      "para o filho.",
+    ]);
   });
 
   it("não altera lista vazia ou unitária", () => {
@@ -195,7 +198,6 @@ describe("filterWhisperHallucinations", () => {
       seg("Conteúdo real da audiência.", 0, 3000),
       seg("Obrigado por assistir!", 3000, 5000),
       seg("Muito obrigado por assistirem.", 5000, 7000),
-      seg("Obrigado.", 7000, 8000),
       seg("Até o próximo vídeo.", 8000, 10000),
     ];
     const out = filterWhisperHallucinations(input);
@@ -360,5 +362,136 @@ describe("mergeConsecutiveSameSpeakerSegments", () => {
     expect(cleaned).toHaveLength(1);
     const matches = cleaned[0].text.match(/o que que é/g) ?? [];
     expect(matches.length).toBeLessThanOrEqual(2);
+  });
+});
+
+describe("limpeza não apaga fala legítima do registro", () => {
+  const texts = (segments: TranscriptSegment[]) => segments.map((s) => s.text);
+  const list = (...items: string[]) => items.map((text, i) => seg(text, i * 1000, i * 1000 + 900));
+
+  it.each([
+    "A audiência foi curta.",
+    "Comente sobre o laudo pericial.",
+    "Comente o vídeo apresentado pela defesa.",
+    "Obrigado.",
+    "[risos] Não é bem assim, doutor.",
+    "(música) Ele tocava música na igreja.",
+    "Obrigado por ver isso, doutor.",
+    "Até o próximo encontro, a senhora fica intimada.",
+    "Ele pediu a tradução e legendas por escrito.",
+  ])("filtro mantém %j", (text) => {
+    expect(texts(filterWhisperHallucinations(list(text)))).toEqual([text]);
+  });
+
+  it.each([
+    "Obrigado por assistir ao vídeo!",
+    "Curtam e se inscrevam.",
+    "Curta o vídeo e deixe seu like.",
+    "Inscreva-se no canal.",
+    "[Música] [Aplausos]",
+  ])("filtro continua removendo %j", (text) => {
+    expect(filterWhisperHallucinations(list(text))).toEqual([]);
+  });
+
+  it("mantém respostas curtas repetidas poucas vezes", () => {
+    const input = list("O senhor mora lá?", "Sim.", "Sim.", "Trabalhou?", "Sim.", "Não.", "Sim.", "Não.");
+    expect(collapseHallucinationCycles(input)).toEqual(input);
+  });
+
+  it("mantém pergunta repetida duas vezes, como quando alguém não ouviu", () => {
+    const input = list("O senhor confirma o que disse antes?", "O senhor confirma o que disse antes?");
+    expect(collapseHallucinationCycles(input)).toEqual(input);
+  });
+
+  it("continua colapsando loop curto longo e loop de frase", () => {
+    const shortLoop = list(...Array(20).fill("Sim."), "Fim da fala");
+    expect(texts(collapseHallucinationCycles(shortLoop))).toEqual(["Sim.", "Fim da fala"]);
+
+    const sentence = "A senhora gastou quanto para levantar a casa?";
+    const sentenceLoop = list(sentence, sentence, sentence, "Fim da fala");
+    expect(texts(collapseHallucinationCycles(sentenceLoop))).toEqual([sentence, "Fim da fala"]);
+  });
+
+  it("mantém perguntas parecidas que diferem em um dado", () => {
+    const input = list(
+      "A senhora trabalhou na roça em 2010?",
+      "Trabalhei sim, excelência, por muitos anos.",
+      "A senhora trabalhou na roça em 2011?",
+      "A senhora trabalhou na roça em 2012?"
+    );
+    expect(collapseNearDuplicateLongSegments(input)).toEqual(input);
+  });
+
+  it("mantém a mesma resposta dada a perguntas diferentes", () => {
+    const answer = "Não me recordo disso, excelência.";
+    const input = list(
+      answer,
+      "O senhor recebeu o benefício em casa?",
+      answer,
+      "E depois?",
+      answer
+    );
+    expect(collapseNearDuplicateLongSegments(input)).toEqual(input);
+  });
+
+  it("mantém duas falas seguidas parecidas, sem indício de loop", () => {
+    const input = list(
+      "A senhora trabalhou na roça naquele ano?",
+      "A senhora trabalhou na roça naquele ano todo?"
+    );
+    expect(collapseNearDuplicateLongSegments(input)).toEqual(input);
+  });
+
+  it.each([
+    "O CPF é zero zero zero um dois três",
+    "o número 0 0 0 1 2 3",
+    "foi em 2010 2010 2010",
+    "muito muito muito obrigado",
+    "não não não eu não fui",
+  ])("colapso interno mantém %j", (text) => {
+    expect(collapseRepeatedNgramsInText(text)).toBe(text);
+  });
+
+  it("colapso interno nunca altera sequência de números, mesmo longa", () => {
+    const text = "zero ".repeat(20).trim();
+    expect(collapseRepeatedNgramsInText(text)).toBe(text);
+  });
+
+  it("audiência completa: mantém toda a fala real e remove só o loop", () => {
+    const fala = [
+      "Está aberta a audiência.",
+      "O CPF da senhora é zero zero zero um dois três?",
+      "Sim.",
+      "Sim.",
+      "A senhora trabalhou na roça em 2010?",
+      "Não me recordo disso, excelência.",
+      "A senhora trabalhou na roça em 2011?",
+      "Não me recordo disso, excelência.",
+      "[risos] Não é bem assim, doutor.",
+      "Obrigado.",
+    ];
+    const loop = Array(30).fill("E ele falou para mim que ia pagar o filho");
+    const crescente = [
+      "Ele disse para mim que a partir de janeiro",
+      "Ele disse para mim que a partir de janeiro ia pagar",
+      "Ele disse para mim que a partir de janeiro ia pagar o filho",
+    ];
+    const lixo = ["Legendas pela comunidade Amara.org", "[Música]", "Obrigado por assistir!"];
+    const input = list(...fala, ...loop, ...crescente, ...lixo, "Encerrada a audiência.");
+
+    const out = collapseNearDuplicateLongSegments(
+      collapseHallucinationCycles(
+        filterWhisperHallucinations(
+          collapseRepetitionsWithinSegments(mergeConsecutiveSameSpeakerSegments(input))
+        )
+      )
+    );
+
+    expect(texts(out)).toEqual([
+      ...fala,
+      "E ele falou para mim que ia pagar o filho",
+      crescente[0],
+      "Encerrada a audiência.",
+    ]);
   });
 });
