@@ -20,7 +20,7 @@ import { useHybridStream } from "@/hooks/useHybridStream";
 import { useMultiCameraStream } from "@/hooks/useMultiCameraStream";
 import { useStorageMonitor } from "@/hooks/useStorageMonitor";
 import { Modal } from "@/components/ui/Modal";
-import { uploadRecoverySegments } from "@/lib/upload-client";
+import { ensureGravacaoRecord, uploadRecoverySegments } from "@/lib/upload-client";
 import { buildSegmentsFromChunks } from "@/lib/chunk-segmentation";
 import { RECORDING } from "@/lib/constants";
 import type { ProcessMetadata, ModoGravacao, HybridLayout, MultiCameraLayout } from "@/types/recording";
@@ -414,6 +414,8 @@ export const RecordingScreen = ({
         return;
       }
 
+      await ensureGravacaoRecord(gravacaoId, metadata, modo);
+
       const uploadResult = await uploadRecoverySegments(gravacaoId, segments, {
         duracao: durationSec,
         onProgress: setUploadProgress,
@@ -442,7 +444,7 @@ export const RecordingScreen = ({
   }, [
     stop, stopSpeech, flushLiveTranscription, elapsedMs, clearRecoveryRecord, toast,
     isHybrid, stopHybrid, isMultiCamera, stopMultiCamera,
-    onComplete, getAllChunks, clearChunks, gravacaoId, estimatedMp4Bytes,
+    onComplete, getAllChunks, clearChunks, gravacaoId, estimatedMp4Bytes, metadata, modo,
   ]);
 
   // ── Speech status transitions ─────────────────────────────────────────────

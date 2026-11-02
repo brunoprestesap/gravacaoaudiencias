@@ -1,4 +1,5 @@
-import type { ChunkRecord } from "@/types/recording";
+import type { ChunkRecord, ModoGravacao, ProcessMetadata } from "@/types/recording";
+import { PROCESSO_REGEX } from "@/types/metadata";
 
 export interface UploadResult {
   success: boolean;
@@ -17,6 +18,45 @@ export interface UploadResult {
     maxBytes: number;
     apto: boolean;
   };
+}
+
+/**
+ * Cria o registro da gravação no servidor. Lança erro se não conseguir.
+ */
+export async function createGravacaoRecord(
+  gravacaoId: string,
+  metadata: ProcessMetadata,
+  modo: ModoGravacao
+): Promise<void> {
+  const res = await fetch("/api/gravacoes", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id: gravacaoId, metadata, modo }),
+  });
+  if (!res.ok) {
+    throw new Error(`Falha ao criar o registro da gravação (status ${res.status}).`);
+  }
+}
+
+/**
+ * Garante que o registro existe antes do upload. A gravação pode ter começado com o
+ * servidor fora do ar, e sem o registro o upload responderia 404 para sempre.
+ */
+export async function ensureGravacaoRecord(
+  gravacaoId: string,
+  metadata: ProcessMetadata,
+  modo: ModoGravacao
+): Promise<void> {
+  const res = await fetch(`/api/gravacoes/${encodeURIComponent(gravacaoId)}`);
+  if (res.ok) return;
+  if (res.status !== 404) {
+    throw new Error(`Falha ao consultar o registro da gravação (status ${res.status}).`);
+  }
+  // A tela de retomada usa um número provisório enquanto carrega os dados locais.
+  if (!PROCESSO_REGEX.test(metadata.numeroProcesso)) {
+    throw new Error("Dados do processo indisponíveis para criar o registro da gravação.");
+  }
+  await createGravacaoRecord(gravacaoId, metadata, modo);
 }
 
 /**

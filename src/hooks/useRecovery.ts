@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { getDb } from "@/hooks/useChunkStorage";
-import { uploadRecoverySegments } from "@/lib/upload-client";
+import { ensureGravacaoRecord, uploadRecoverySegments } from "@/lib/upload-client";
 import { buildSegmentsFromChunks } from "@/lib/chunk-segmentation";
 import { INDEXEDDB } from "@/lib/constants";
 import type { ChunkRecord, RecoveryRecord } from "@/types/recording";
@@ -134,7 +134,7 @@ export const useRecovery = () => {
     if (!state.recoveryData) return false;
 
     setState((s) => ({ ...s, isConsolidating: true }));
-    const { gravacaoId } = state.recoveryData;
+    const { gravacaoId, metadata, modo } = state.recoveryData;
 
     try {
       const db = await getDb();
@@ -152,6 +152,8 @@ export const useRecovery = () => {
       if (segments.length === 0) {
         throw new Error("Nenhum segmento válido encontrado para envio.");
       }
+
+      await ensureGravacaoRecord(gravacaoId, metadata, modo);
 
       // Upload with estimated duration
       const estimatedDurationSec = chunks.length * 5;

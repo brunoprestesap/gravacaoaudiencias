@@ -9,6 +9,7 @@ import { ProcessMetadataCard } from "@/components/metadata/ProcessMetadataCard";
 import { useDeviceDetection } from "@/hooks/useDeviceDetection";
 import { useToast } from "@/hooks/useToast";
 import { Button } from "@/components/ui/Button";
+import { createGravacaoRecord } from "@/lib/upload-client";
 import type { ProcessMetadata } from "@/types/metadata";
 import type { ModoGravacao } from "@/types/recording";
 
@@ -54,23 +55,16 @@ export const RecordingWizard = () => {
     const id = `grav-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     setGravacaoId(id);
 
-    // Create gravação record via API (best-effort, don't block)
+    // Uma falha aqui não impede a audiência de ser gravada: os chunks ficam salvos no
+    // navegador e o registro é criado de novo antes do upload (ensureGravacaoRecord).
     try {
-      await fetch("/api/gravacoes", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          id,
-          metadata,
-          modo,
-        }),
-      });
+      await createGravacaoRecord(id, metadata, modo);
     } catch {
-      // API might not exist yet — continue anyway
+      toast.warning("Servidor indisponível. A gravação pode ser feita normalmente e será enviada ao encerrar.");
     }
 
     setCurrentStep(3);
-  }, [metadata, modo]);
+  }, [metadata, modo, toast]);
 
   // ── Step 3: Recording complete callback ───────────────────────────────────
 
