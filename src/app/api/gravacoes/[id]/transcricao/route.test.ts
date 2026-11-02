@@ -215,6 +215,44 @@ describe("API /api/gravacoes/[id]/transcricao", () => {
     expect(updateMock).toHaveBeenCalledTimes(1);
   });
 
+  it("PATCH ignora segmento que o servidor já tem, em um reenvio", async () => {
+    const existente = {
+      id: "seg-1",
+      text: "Boa tarde",
+      offsetMs: 0,
+      createdAt: "2026-01-01T00:00:00.000Z",
+    };
+    findUniqueMock.mockResolvedValue({
+      id: "gravacao-1",
+      userId: "user-1",
+      vara: "1a Vara",
+      transcricaoTexto: "Boa tarde",
+      transcricaoSegmentos: [existente],
+      numeroProcesso: "0000000-00.0000.0.00.0000",
+      classeProcessual: null,
+      partes: null,
+      nomeJuiz: null,
+      tipoAudiencia: null,
+      dataAudiencia: null,
+    });
+    updateMock.mockResolvedValue({
+      transcricaoStatus: "PROCESSANDO",
+      transcricaoTexto: "Boa tarde",
+      transcricaoSegmentos: [existente],
+      transcricaoAtualizadoEm: new Date(),
+    });
+
+    const req = {
+      json: async () => ({
+        segments: [existente, { ...existente, id: "seg-2", text: "Boa noite" }],
+      }),
+    } as never;
+    await PATCH(req, makeContext());
+
+    const { transcricaoSegmentos } = updateMock.mock.calls[0][0].data;
+    expect(transcricaoSegmentos.map((s: { id: string }) => s.id)).toEqual(["seg-1", "seg-2"]);
+  });
+
   it("PATCH rejeita voiceFeatures inválido", async () => {
     findUniqueMock.mockResolvedValue({
       id: "gravacao-1",

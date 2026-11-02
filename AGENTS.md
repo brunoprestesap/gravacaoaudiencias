@@ -62,6 +62,7 @@ Monólito **Next.js 16** (App Router) para gravação e consulta de audiências 
 | `GOOGLE_TRANSCRIPTION_DIARIZATION_ENABLED` | Não | `false` por default. Habilite só com modelo compatível (ex.: `chirp_3`). `chirp_2` em batch rejeita `diarizationConfig`. |
 | `GOOGLE_TRANSCRIPTION_DIARIZATION_MIN_SPEAKERS` / `GOOGLE_TRANSCRIPTION_DIARIZATION_MAX_SPEAKERS` | Não | Limites quando diarização nativa está habilitada (defaults: 2 / 6). |
 | `GOOGLE_TRANSCRIPTION_USE_GRPC` | Não | `false` por default — usa REST/JSON. Se `true`, usa gRPC (mais sujeito a erros mascarados ao rodar dentro de Next/Turbopack). |
+| `NEXT_PUBLIC_LIVE_TRANSCRIPTION_ENABLED` | Não | `true` liga a transcrição ao vivo durante a gravação (padrão: desligada). Lida no build. Atenção: o reconhecimento do navegador envia o áudio da audiência aos servidores do fornecedor (no Chrome, Google), mesmo com motor de transcrição local. |
 | `MARITACA_API_KEY` | Se gerar termo | Chave da Maritaca AI. Header de auth é `Authorization: Key <chave>` (NÃO Bearer). |
 | `MARITACA_MODEL` | Não | Modelo Maritaca (padrão: `sabia-4` — 128k contexto, structured output, corpus jurídico BR). |
 | `MARITACA_BASE_URL` | Não | URL base da API Maritaca (padrão: `https://chat.maritaca.ai/api`). |
@@ -150,6 +151,7 @@ No motor `whisper` (whisper.cpp) também é passada a flag `--suppress-nst` que 
 
 ## Comportamentos da transcrição fáceis de perder
 
+- **Transcrição ao vivo desligada por padrão**: sem `NEXT_PUBLIC_LIVE_TRANSCRIPTION_ENABLED=true`, a tela não reconhece fala nem chama o `PATCH /transcricao`, e o status fica `PENDENTE` até a transcrição em lote. A suite E2E roda nesse modo; para exercitar o outro, rode `NEXT_PUBLIC_LIVE_TRANSCRIPTION_ENABLED=true npx playwright test e2e/transcricao-ao-vivo.spec.ts` com nenhum servidor aberto.
 - **Motor `mock`**: `LOCAL_TRANSCRIPTION_ENGINE=mock` devolve segmentos fixos e dispensa binários e modelos. A suite E2E usa esse motor.
 - **WAV ao lado do MP4**: o upload extrai um WAV direto do WebM original (`transcriptionAudioPathFor`) e a transcrição prefere esse arquivo, para evitar a perda de qualidade do AAC. Se a extração falhar, a transcrição usa o MP4. O `DELETE` da gravação também apaga esse WAV.
 - **Recuperação no boot**: [`src/instrumentation.ts`](src/instrumentation.ts) marca como `ERRO` toda transcrição e todo termo em `PROCESSANDO` quando o servidor inicia. Com mais de uma instância, um boot também marcaria transcrições ainda em andamento nas outras.

@@ -1,3 +1,11 @@
+/**
+ * Transcrição ao vivo durante a gravação. Desligada por padrão: o reconhecimento de fala
+ * do navegador envia o áudio da audiência aos servidores do fornecedor (no Chrome, Google),
+ * mesmo com motor de transcrição local. Variável lida no build do Next.
+ */
+export const isLiveTranscriptionEnabled = () =>
+  process.env.NEXT_PUBLIC_LIVE_TRANSCRIPTION_ENABLED === "true";
+
 export const RECORDING = {
   CHUNK_INTERVAL_MS: 5000,
   PREFERRED_CODEC: "video/webm;codecs=vp9,opus",

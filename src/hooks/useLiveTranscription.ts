@@ -4,6 +4,11 @@ import { useRef, useEffect, useCallback } from "react";
 import { useToast } from "@/hooks/useToast";
 import type { SpeechSegment } from "@/hooks/useSpeechRecognition";
 
+interface FlushOptions {
+  force?: boolean;
+  isFinal?: boolean;
+}
+
 /**
  * Gerencia o envio incremental de segmentos de transcrição ao servidor.
  * Batcha segmentos finais, envia com retry e agenda flush periódico quando ativo.
@@ -17,9 +22,10 @@ export function useLiveTranscription(
   const pendingSpeechSegmentsRef = useRef<SpeechSegment[]>([]);
   const queuedSpeechIdsRef = useRef<Set<string>>(new Set());
   const flushRetriesRef = useRef(0);
+  const sendQueueRef = useRef<Promise<unknown>>(Promise.resolve());
 
-  const flush = useCallback(
-    async ({ force = false, isFinal = false }: { force?: boolean; isFinal?: boolean } = {}) => {
+  const send = useCallback(
+    async ({ force = false, isFinal = false }: FlushOptions = {}) => {
       if (pendingSpeechSegmentsRef.current.length === 0 && !isFinal) {
         flushRetriesRef.current = 0;
         return true;
@@ -42,8 +48,6 @@ export function useLiveTranscription(
               offsetMs: segment.offsetMs,
               createdAt: segment.createdAt,
               speakerId: segment.speakerId,
-              role: segment.role,
-              confidence: segment.confidence,
               voiceFeatures: segment.voiceFeatures,
             })),
           }),
@@ -70,6 +74,17 @@ export function useLiveTranscription(
       }
     },
     [gravacaoId, toast]
+  );
+
+  // Um envio por vez: o servidor lê os segmentos, soma os novos e grava, então dois
+  // envios sobrepostos apagariam os segmentos um do outro.
+  const flush = useCallback(
+    (options: FlushOptions = {}) => {
+      const result = sendQueueRef.current.then(() => send(options));
+      sendQueueRef.current = result;
+      return result;
+    },
+    [send]
   );
 
   // Enfileira novos segmentos finais

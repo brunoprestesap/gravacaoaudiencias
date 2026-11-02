@@ -22,7 +22,7 @@ import { useStorageMonitor } from "@/hooks/useStorageMonitor";
 import { Modal } from "@/components/ui/Modal";
 import { ensureGravacaoRecord, uploadRecoverySegments } from "@/lib/upload-client";
 import { buildSegmentsFromChunks } from "@/lib/chunk-segmentation";
-import { RECORDING } from "@/lib/constants";
+import { RECORDING, isLiveTranscriptionEnabled } from "@/lib/constants";
 import type { ProcessMetadata, ModoGravacao, HybridLayout, MultiCameraLayout } from "@/types/recording";
 
 interface RecordingScreenProps {
@@ -73,6 +73,7 @@ export const RecordingScreen = ({
   const pendingStartRef = useRef(false);
 
   const isHybrid = modo === "HIBRIDO";
+  const liveTranscriptionEnabled = isLiveTranscriptionEnabled();
 
   // ── Device detection ──────────────────────────────────────────────────────
   const {
@@ -191,7 +192,7 @@ export const RecordingScreen = ({
     toast.warning("Pouco espaço em disco para a gravação. Libere espaço para não perder trechos.");
   }, [toast]);
   useStorageMonitor(isActive, warnLowStorage);
-  const voiceFeaturesRef = useAudioAnalyser(recorderStream, isActive);
+  const voiceFeaturesRef = useAudioAnalyser(recorderStream, isActive && liveTranscriptionEnabled);
   const audioLevelRef = useAudioLevel(recorderStream, isActive);
 
   // ── Speech recognition ────────────────────────────────────────────────────
@@ -212,6 +213,7 @@ export const RecordingScreen = ({
     resume: resumeSpeech,
     stop: stopSpeech,
   } = useSpeechRecognition({
+    enabled: liveTranscriptionEnabled,
     lang: "pt-BR",
     processMetadata: metadata,
     getVoiceFeatures: () => voiceFeaturesRef.current,
@@ -222,7 +224,7 @@ export const RecordingScreen = ({
   const { flush: flushLiveTranscription } = useLiveTranscription(
     gravacaoId,
     finalSegments,
-    isActive
+    isActive && liveTranscriptionEnabled
   );
 
   // ── Start logic ───────────────────────────────────────────────────────────
@@ -392,8 +394,10 @@ export const RecordingScreen = ({
     if (isHybrid) stopHybrid();
     if (isMultiCamera) stopMultiCamera();
 
-    await new Promise((resolve) => setTimeout(resolve, 400));
-    await flushLiveTranscription({ force: true });
+    if (liveTranscriptionEnabled) {
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      await flushLiveTranscription({ force: true });
+    }
 
     toast.info("Processando gravação...");
     setIsUploading(true);
@@ -423,7 +427,9 @@ export const RecordingScreen = ({
 
       await clearChunks();
       await clearRecoveryRecord();
-      await flushLiveTranscription({ force: true, isFinal: true });
+      if (liveTranscriptionEnabled) {
+        await flushLiveTranscription({ force: true, isFinal: true });
+      }
 
       setIsUploading(false);
       if (uploadResult.warning) {
@@ -442,7 +448,7 @@ export const RecordingScreen = ({
       setIsUploading(false);
     }
   }, [
-    stop, stopSpeech, flushLiveTranscription, elapsedMs, clearRecoveryRecord, toast,
+    stop, stopSpeech, flushLiveTranscription, liveTranscriptionEnabled, elapsedMs, clearRecoveryRecord, toast,
     isHybrid, stopHybrid, isMultiCamera, stopMultiCamera,
     onComplete, getAllChunks, clearChunks, gravacaoId, estimatedMp4Bytes, metadata, modo,
   ]);
@@ -519,7 +525,7 @@ export const RecordingScreen = ({
         : "Parado";
 
   const startWithSpeechNotice = useCallback(async () => {
-    if (!isSpeechSupported && !speechSupportWarnedRef.current) {
+    if (liveTranscriptionEnabled && !isSpeechSupported && !speechSupportWarnedRef.current) {
       speechSupportWarnedRef.current = true;
       toast.warning(speechUnsupportedReason ?? "Transcrição em tempo real indisponível neste navegador. Use Chrome ou Edge.");
     }
@@ -529,7 +535,7 @@ export const RecordingScreen = ({
       speechStartedFromUserGestureRef.current = false;
     }
     await start();
-  }, [isSpeechSupported, speechUnsupportedReason, toast, start, startSpeech]);
+  }, [liveTranscriptionEnabled, isSpeechSupported, speechUnsupportedReason, toast, start, startSpeech]);
 
   const handleDeviceLostResume = useCallback(async () => {
     setLostDevice(null);
@@ -727,40 +733,44 @@ export const RecordingScreen = ({
               <div className="my-4 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent" />
 
               {/* Live transcription */}
-              <div className="mb-5">
-                <h3 className="mb-3 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-widest text-white/40">
-                  <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 18.75a6 6 0 0 0 6-6v-1.5m-6 7.5a6 6 0 0 1-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 0 1-3-3V4.5a3 3 0 1 1 6 0v8.25a3 3 0 0 1-3 3Z" />
-                  </svg>
-                  Transcrição ao vivo
-                </h3>
-                <div className="rounded-lg bg-white/5 p-3 ring-1 ring-white/10">
-                  <p className={`mb-2 text-[11px] uppercase tracking-wider ${isSpeechSupported ? "text-emerald-300/80" : "text-amber-300/80"}`}>
-                    {speechStatusLabel}
-                  </p>
-                  {finalSegments.length > 0 ? (
-                    <div className="max-h-44 space-y-2 overflow-y-auto">
-                      {finalSegments.slice(-8).map((segment) => (
-                        <p key={segment.id} className="text-xs leading-relaxed text-white/80">
-                          <span className="mr-2 rounded bg-white/10 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-cyan-200">
-                            {segment.role ?? "DESCONHECIDO"}
-                          </span>
-                          {segment.text}
+              {liveTranscriptionEnabled && (
+                <>
+                  <div className="mb-5">
+                    <h3 className="mb-3 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-widest text-white/40">
+                      <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 18.75a6 6 0 0 0 6-6v-1.5m-6 7.5a6 6 0 0 1-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 0 1-3-3V4.5a3 3 0 1 1 6 0v8.25a3 3 0 0 1-3 3Z" />
+                      </svg>
+                      Transcrição ao vivo
+                    </h3>
+                    <div className="rounded-lg bg-white/5 p-3 ring-1 ring-white/10">
+                      <p className={`mb-2 text-[11px] uppercase tracking-wider ${isSpeechSupported ? "text-emerald-300/80" : "text-amber-300/80"}`}>
+                        {speechStatusLabel}
+                      </p>
+                      {finalSegments.length > 0 ? (
+                        <div className="max-h-44 space-y-2 overflow-y-auto">
+                          {finalSegments.slice(-8).map((segment) => (
+                            <p key={segment.id} className="text-xs leading-relaxed text-white/80">
+                              <span className="mr-2 rounded bg-white/10 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-cyan-200">
+                                {segment.role ?? "DESCONHECIDO"}
+                              </span>
+                              {segment.text}
+                            </p>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-xs leading-relaxed text-white/75">
+                          {transcriptText || "Nenhum trecho final reconhecido ainda."}
                         </p>
-                      ))}
+                      )}
+                      {interimText && (
+                        <p className="mt-2 text-xs italic leading-relaxed text-white/45">{interimText}</p>
+                      )}
                     </div>
-                  ) : (
-                    <p className="text-xs leading-relaxed text-white/75">
-                      {transcriptText || "Nenhum trecho final reconhecido ainda."}
-                    </p>
-                  )}
-                  {interimText && (
-                    <p className="mt-2 text-xs italic leading-relaxed text-white/45">{interimText}</p>
-                  )}
-                </div>
-              </div>
+                  </div>
 
-              <div className="my-4 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent" />
+                  <div className="my-4 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent" />
+                </>
+              )}
 
               {/* Storage info */}
               <div>

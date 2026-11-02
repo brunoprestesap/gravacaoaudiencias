@@ -20,6 +20,8 @@ export interface SpeechSegment {
 }
 
 interface UseSpeechRecognitionOptions {
+  /** Desligado, nenhum reconhecedor é criado e nenhum áudio é enviado ao navegador. */
+  enabled?: boolean;
   lang?: string;
   processMetadata?: ProcessMetadata;
   getVoiceFeatures?: () => VoiceFeatures | undefined;
@@ -59,6 +61,7 @@ interface BrowserWithWebkitSpeech extends Window {
 const randomId = () => `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
 export const useSpeechRecognition = ({
+  enabled = true,
   lang = "pt-BR",
   processMetadata,
   getVoiceFeatures,
@@ -66,6 +69,9 @@ export const useSpeechRecognition = ({
 }: UseSpeechRecognitionOptions = {}) => {
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const onErrorRef = useRef<UseSpeechRecognitionOptions["onError"]>(onError);
+  // Em refs, porque mudam entre renders: recriar o reconhecedor derrubaria a captura em curso.
+  const processMetadataRef = useRef(processMetadata);
+  const getVoiceFeaturesRef = useRef(getVoiceFeatures);
   const shouldRunRef = useRef(false);
   const isStartingRef = useRef(false);
   const startedAtRef = useRef<number | null>(null);
@@ -74,14 +80,15 @@ export const useSpeechRecognition = ({
   const restartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const isSupported =
-    typeof window !== "undefined"
+    enabled
+    && typeof window !== "undefined"
     && Boolean(
       (window as BrowserWithWebkitSpeech).webkitSpeechRecognition
       || (window as BrowserWithWebkitSpeech).SpeechRecognition
     );
 
   const unsupportedReason = (() => {
-    if (typeof window === "undefined") return null;
+    if (!enabled || typeof window === "undefined") return null;
     if (isSupported) return null;
     const ua = navigator.userAgent;
     if (/Firefox/i.test(ua)) return "O Firefox não suporta transcrição em tempo real. Use o Google Chrome ou Microsoft Edge.";
@@ -95,10 +102,12 @@ export const useSpeechRecognition = ({
 
   useEffect(() => {
     onErrorRef.current = onError;
-  }, [onError]);
+    processMetadataRef.current = processMetadata;
+    getVoiceFeaturesRef.current = getVoiceFeatures;
+  }, [onError, processMetadata, getVoiceFeatures]);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
+    if (!enabled || typeof window === "undefined") return;
     const browserWindow = window as BrowserWithWebkitSpeech;
     const ctor = browserWindow.webkitSpeechRecognition ?? browserWindow.SpeechRecognition;
     if (!ctor) return;
@@ -119,7 +128,7 @@ export const useSpeechRecognition = ({
         if (result.isFinal) {
           const startedAt = startedAtRef.current ?? Date.now();
           const offsetMs = Math.max(0, Date.now() - startedAt - totalPausedMsRef.current);
-          const inference = inferSpeakerRoleFromText(transcript, processMetadata);
+          const inference = inferSpeakerRoleFromText(transcript, processMetadataRef.current);
           const segment: SpeechSegment = {
             id: randomId(),
             text: transcript,
@@ -127,7 +136,7 @@ export const useSpeechRecognition = ({
             createdAt: new Date().toISOString(),
             role: inference.role,
             confidence: inference.confidence,
-            voiceFeatures: getVoiceFeatures?.(),
+            voiceFeatures: getVoiceFeaturesRef.current?.(),
           };
           setFinalSegments((prev) => [...prev, segment]);
         } else {
@@ -181,7 +190,7 @@ export const useSpeechRecognition = ({
       }
       recognitionRef.current = null;
     };
-  }, [lang, processMetadata, getVoiceFeatures]);
+  }, [enabled, lang]);
 
   const resetSession = useCallback(() => {
     setInterimText("");

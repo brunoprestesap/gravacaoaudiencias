@@ -856,13 +856,19 @@ export function diarizeSegmentsByRole(
     const speakerChanged = detectSpeakerChange(segment, previous);
     const shouldForceNewId = speakerChanged && mergedInference.role === previous?.role;
 
+    // DESCONHECIDO é ausência de papel, não um papel definido por quem enviou.
+    const unknownRole = segment.role === "DESCONHECIDO";
+    const resolvedRole = unknownRole ? mergedInference.role : (segment.role ?? mergedInference.role);
+
     const resolved: ResolvedSegmentWithInference = {
       ...segment,
-      role: segment.role ?? mergedInference.role,
-      confidence: segment.confidence ?? mergedInference.confidence,
+      role: resolvedRole,
+      confidence: unknownRole
+        ? mergedInference.confidence
+        : (segment.confidence ?? mergedInference.confidence),
       speakerId: shouldForceNewId
-        ? allocateSpeakerId(segment.role ?? mergedInference.role)
-        : allocateSpeakerId(segment.role ?? mergedInference.role, segment.speakerId),
+        ? allocateSpeakerId(resolvedRole)
+        : allocateSpeakerId(resolvedRole, segment.speakerId),
       voiceFeatures: normalizeVoiceFeatures(segment.voiceFeatures),
       inferenceConfidence: mergedInference.confidence,
     };

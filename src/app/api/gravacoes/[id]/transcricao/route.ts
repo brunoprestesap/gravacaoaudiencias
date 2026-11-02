@@ -349,8 +349,10 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
       };
     });
     const currentSegments = parseStoredSegments(gravacao.transcricaoSegmentos);
+    // O cliente reenvia o lote quando não recebe a resposta, mesmo que o servidor tenha gravado.
+    const knownIds = new Set(currentSegments.map((segment) => segment.id));
     const diarizedIncoming = diarizeSegmentsByRole(
-      contextualSegments as TranscriptSegment[],
+      contextualSegments.filter((segment) => !knownIds.has(segment.id)) as TranscriptSegment[],
       contextualMetadata
     );
     const mergedSegments = [...currentSegments, ...diarizedIncoming];
