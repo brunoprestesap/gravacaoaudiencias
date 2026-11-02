@@ -28,4 +28,4 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### CI
 
-- Workflow ativo: [.github/workflows/test-engineer.yml](.github/workflows/test-engineer.yml). Roda em cada PR: `type-check`, Vitest e a suite E2E, com Postgres como serviço do job. `npm run lint` ainda não faz parte.
+- Workflow ativo: [.github/workflows/test-engineer.yml](.github/workflows/test-engineer.yml). Roda em cada PR: `type-check`, lint, Vitest e a suite E2E, com Postgres como serviço do job.
