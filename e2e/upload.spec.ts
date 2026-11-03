@@ -43,6 +43,67 @@ test.describe("Upload de gravação", () => {
     await api.dispose();
   });
 
+  test("tenta a conversão de novo com o WebM guardado, sem novo envio", async ({ playwright }) => {
+    const grav = await seedGravacao({ ownerUsername: "servidor1", status: "EM_ANDAMENTO" });
+    const api = await playwright.request.newContext({
+      storageState: "e2e/.auth/servidor1.json",
+      baseURL,
+    });
+    const uploadDir = process.env.E2E_UPLOAD_DIR ?? "/tmp/audiencia-e2e-uploads";
+    const fileBuffer = await fs.readFile(SAMPLE_WEBM);
+    const guardado = path.join(
+      uploadDir,
+      "conversoes-pendentes",
+      `${grav.id}.${fileBuffer.length}.webm`
+    );
+    await fs.mkdir(path.dirname(guardado), { recursive: true });
+    await fs.writeFile(guardado, fileBuffer);
+
+    const outroTamanho = await api.post("/api/upload", {
+      multipart: {
+        mode: "retryConversion",
+        gravacaoId: grav.id,
+        inputBytes: String(fileBuffer.length + 1),
+      },
+    });
+    expect(outroTamanho.status()).toBe(404);
+
+    const res = await api.post("/api/upload", {
+      multipart: {
+        mode: "retryConversion",
+        gravacaoId: grav.id,
+        inputBytes: String(fileBuffer.length),
+        duracao: "2",
+      },
+      timeout: 60_000,
+    });
+    expect(res.status()).toBe(200);
+    const updated = await getPrisma().gravacao.findUnique({ where: { id: grav.id } });
+    expect(updated?.status).toBe("FINALIZADA");
+    expect(updated?.caminhoArquivo).toMatch(/\.mp4$/);
+    await expect(fs.stat(path.join(uploadDir, updated!.caminhoArquivo!))).resolves.toBeTruthy();
+    await expect(fs.stat(guardado)).rejects.toThrow();
+    await api.dispose();
+  });
+
+  test("excluir a gravação apaga o WebM guardado", async ({ playwright }) => {
+    const grav = await seedGravacao({ ownerUsername: "servidor1", status: "EM_ANDAMENTO" });
+    const api = await playwright.request.newContext({
+      storageState: "e2e/.auth/servidor1.json",
+      baseURL,
+    });
+    const uploadDir = process.env.E2E_UPLOAD_DIR ?? "/tmp/audiencia-e2e-uploads";
+    const guardado = path.join(uploadDir, "conversoes-pendentes", `${grav.id}.123.webm`);
+    await fs.mkdir(path.dirname(guardado), { recursive: true });
+    await fs.writeFile(guardado, "webm");
+
+    const res = await api.delete(`/api/gravacoes/${grav.id}`);
+
+    expect(res.status()).toBe(200);
+    await expect(fs.stat(guardado)).rejects.toThrow();
+    await api.dispose();
+  });
+
   test("upload sem ser dono retorna 403", async ({ playwright }) => {
     const grav = await seedGravacao({ ownerUsername: "servidor1" });
     const api = await playwright.request.newContext({

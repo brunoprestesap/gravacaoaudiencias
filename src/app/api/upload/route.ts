@@ -19,6 +19,14 @@ import {
 import { transcriptionAudioPathFor } from "@/lib/transcription-local/audio";
 import { apiError } from "@/lib/api-response";
 import { resolveUploadPath } from "@/lib/upload-path";
+import {
+  attemptedConversionPath,
+  claimPendingConversion,
+  isConversionRunning,
+  keepForRetry,
+  pendingConversionPath,
+  removePendingConversions,
+} from "@/lib/conversao-pendente";
 
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(process.cwd(), "uploads");
 const MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024; // 2GB de entrada
@@ -121,6 +129,19 @@ export async function POST(req: NextRequest) {
   const { session, error } = await getSessionOrError();
   if (error) return error;
 
+  // Preenchido quando há um WebM completo no disco. Uma falha ao guardá-lo não pode
+  // esconder o erro original, que é o que a resposta precisa contar.
+  let keepWebm: (() => Promise<void>) | null = null;
+  const keepWebmAfterFailure = async () => {
+    const keep = keepWebm;
+    keepWebm = null;
+    try {
+      await keep?.();
+    } catch (keepError) {
+      console.error("[upload] não foi possível guardar o WebM para nova tentativa", keepError);
+    }
+  };
+
   try {
     const requestStart = Date.now();
     let findGravacaoMs = 0;
@@ -138,6 +159,12 @@ export async function POST(req: NextRequest) {
     }
 
     const isRecoverySegmentsMode = mode === "recoverySegments";
+    const isRetryConversionMode = mode === "retryConversion";
+    const retryInputBytes = Number(formData.get("inputBytes"));
+
+    if (isRetryConversionMode && (!Number.isSafeInteger(retryInputBytes) || retryInputBytes <= 0)) {
+      return apiError("inputBytes é obrigatório para tentar a conversão de novo.", 400);
+    }
 
     uploadDebugLog("[upload] incoming request", {
       gravacaoId,
@@ -147,7 +174,7 @@ export async function POST(req: NextRequest) {
       hasSingleFile: Boolean(file),
     });
 
-    if (!isRecoverySegmentsMode && !file) {
+    if (!isRecoverySegmentsMode && !isRetryConversionMode && !file) {
       return apiError("Arquivo é obrigatório para upload padrão.", 400);
     }
     if (isRecoverySegmentsMode && segments.length === 0) {
@@ -201,6 +228,30 @@ export async function POST(req: NextRequest) {
       return apiError("Identificador de gravação inválido para gravar o arquivo.", 400);
     }
 
+    const inputBytes = isRetryConversionMode
+      ? retryInputBytes
+      : isRecoverySegmentsMode
+        ? segments.reduce((sum, segment) => sum + segment.size, 0)
+        : file!.size;
+    const pendingPath = pendingConversionPath(gravacao.id, inputBytes);
+    if (!pendingPath) {
+      return apiError("Identificador de gravação inválido para gravar o arquivo.", 400);
+    }
+    const claimedPath = isRetryConversionMode ? await claimPendingConversion(pendingPath) : null;
+    if (isRetryConversionMode && !claimedPath) {
+      return (await isConversionRunning(pendingPath))
+        ? apiError("A conversão desta gravação já está em andamento.", 409)
+        : apiError("Nenhuma conversão pendente para esta gravação.", 404);
+    }
+    const webmPath = claimedPath ?? webmOutput.fullPath;
+    const keepWebmInPendingDir = () =>
+      keepForRetry(
+        webmPath,
+        isRetryConversionMode ? attemptedConversionPath(pendingPath) : pendingPath,
+        gravacao.id
+      );
+    if (isRetryConversionMode) keepWebm = keepWebmInPendingDir;
+
     // Create directories
     await mkdir(webmOutput.fullDir, { recursive: true });
 
@@ -212,7 +263,9 @@ export async function POST(req: NextRequest) {
     const parsedDuration = duracao ? parseInt(duracao, 10) : NaN;
     let finalDuration = Number.isFinite(parsedDuration) ? parsedDuration : null;
 
-    if (isRecoverySegmentsMode) {
+    if (isRetryConversionMode) {
+      uploadDebugLog("[upload] retrying conversion without a new upload", { gravacaoId, inputBytes });
+    } else if (isRecoverySegmentsMode) {
       try {
         uploadDebugLog("[upload] recovery segments mode selected", {
           gravacaoId,
@@ -248,13 +301,15 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    keepWebm = keepWebmInPendingDir;
+
     // Validação rápida de integridade: detecta WebM corrompido (chunk truncado
     // após crash do navegador, concat com header inválido, gravação só-vídeo).
     // Falhar aqui é mais útil que ver o transcode quebrar com mensagem opaca.
     try {
-      const integrity = await assertRecordingIntegrity(webmOutput.fullPath);
+      const integrity = await assertRecordingIntegrity(webmPath);
       if (!integrity.ok) {
-        await rm(webmOutput.fullPath, { force: true });
+        await rm(webmPath, { force: true });
         console.error("[upload] integridade do WebM rejeitada", {
           gravacaoId,
           reason: integrity.reason,
@@ -285,7 +340,7 @@ export async function POST(req: NextRequest) {
     // a transcrição cairá para o MP4.
     const transcriptionWavPath = transcriptionAudioPathFor(mp4Output.fullPath);
     const transcriptionWavPromise = extractTranscriptionAudio(
-      webmOutput.fullPath,
+      webmPath,
       transcriptionWavPath
     ).then(
       () => true,
@@ -298,9 +353,20 @@ export async function POST(req: NextRequest) {
       }
     );
 
+    // Guarda o WebM e descarta o que sobrou da tentativa, que será refeito na próxima.
+    // Aguarda a extração do WAV antes, para não mexer no arquivo que ela está lendo.
+    keepWebm = async () => {
+      await transcriptionWavPromise;
+      if (gravacao.caminhoArquivo !== mp4Output.relativePath) {
+        await rm(mp4Output.fullPath, { force: true });
+        await rm(transcriptionWavPath, { force: true });
+      }
+      await keepWebmInPendingDir();
+    };
+
     try {
       const transcodeResult = await transcodeWebmToMp4Adaptive(
-        webmOutput.fullPath,
+        webmPath,
         mp4Output.fullPath,
         finalDuration
       );
@@ -325,20 +391,15 @@ export async function POST(req: NextRequest) {
     } catch (transcodeError) {
       console.error("[upload] mp4 transcode failed", {
         gravacaoId,
-        inputPath: webmOutput.fullPath,
+        inputPath: webmPath,
         outputPath: mp4Output.fullPath,
         error: transcodeError instanceof Error ? transcodeError.message : String(transcodeError),
       });
+      await keepWebmAfterFailure();
       if (transcodeError instanceof Error && transcodeError.message === "FFMPEG_NOT_AVAILABLE") {
         return apiError("FFmpeg não está disponível no servidor para conversão para MP4.", 500);
       }
       return apiError("Falha ao converter gravação para MP4.", 500);
-    } finally {
-      // Aguarda a extração WAV antes de remover o WebM (evita race onde rm
-      // mata o input do ffmpeg em execução). Se transcode falhou, ainda
-      // mantemos o WAV — facilita reprocessamento manual da transcrição.
-      await transcriptionWavPromise.catch(() => false);
-      await rm(webmOutput.fullPath, { force: true });
     }
 
     // Update gravação record
@@ -352,7 +413,19 @@ export async function POST(req: NextRequest) {
         duracao: finalDuration,
       },
     });
+    keepWebm = null;
     updateDbMs = Date.now() - updateDbStart;
+
+    // A gravação já está salva: uma falha nesta limpeza não pode virar erro no upload.
+    await Promise.all([
+      rm(webmPath, { force: true }),
+      removePendingConversions(gravacao.id),
+    ]).catch((cleanupError) => {
+      console.warn("[upload] não foi possível apagar o WebM depois da conversão", {
+        gravacaoId,
+        error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+      });
+    });
 
     const stageTimings = {
       findGravacaoMs,
@@ -377,6 +450,7 @@ export async function POST(req: NextRequest) {
     });
   } catch (err) {
     console.error("Erro no upload:", err);
+    await keepWebmAfterFailure();
     return apiError("Erro interno ao salvar arquivo.", 500);
   }
 }

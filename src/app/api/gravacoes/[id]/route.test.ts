@@ -152,6 +152,21 @@ describe("/api/gravacoes/[id]: caminhoArquivo não pode vir do cliente", () => {
       expect(await res.text()).toBe("video");
     });
 
+    it("DELETE apaga o WebM guardado só desta gravação", async () => {
+      const pendentes = path.join(uploadDir, "conversoes-pendentes");
+      mkdirSync(pendentes, { recursive: true });
+      const desta = path.join(pendentes, "gravacao-1.123.webm");
+      const deOutra = path.join(pendentes, "gravacao-10.123.webm");
+      writeFileSync(desta, "webm");
+      writeFileSync(deOutra, "webm");
+
+      const res = await DELETE(getRequest(), context);
+
+      expect(res.status).toBe(200);
+      expect(existsSync(desta)).toBe(false);
+      expect(existsSync(deOutra)).toBe(true);
+    });
+
     it("DELETE continua apagando o vídeo e o WAV", async () => {
       const res = await DELETE(getRequest(), context);
 
