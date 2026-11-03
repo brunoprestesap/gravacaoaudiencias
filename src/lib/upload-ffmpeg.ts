@@ -3,11 +3,16 @@ import { mkdtemp, rm, stat } from "fs/promises";
 import path from "path";
 import os from "os";
 import {
-  buildEncodingPlan,
+  buildFirstEncodingAttempt,
+  buildSecondEncodingAttempt,
   clamp,
+  type EncodingPlan,
   isMp4CodecCompatible,
   PJE_MAX_OUTPUT_SIZE_BYTES,
 } from "@/lib/upload-encoding";
+
+const REDUCED_QUALITY_WARNING =
+  "A imagem do vídeo foi reduzida para caber no limite de 300 MB do PJe.";
 
 export interface MediaProbeInfo {
   durationSeconds: number | null;
@@ -23,6 +28,8 @@ export interface EncodingDiagnostics {
   durationSeconds: number;
   inputBytes: number;
   outputBytes: number;
+  qualityReduced: boolean;
+  maxHeight: number | null;
 }
 
 export interface ConversionTimings {
@@ -219,6 +226,12 @@ export async function extractTranscriptionAudio(
   ]);
 }
 
+// Altura par e nunca maior que a da fonte, sem sondagem nova. Com execFile não há
+// shell: a barra chega ao FFmpeg e escapa a vírgula da expressão dentro do filtro.
+function scaleFilterArgs(maxHeight: number | null): string[] {
+  return maxHeight === null ? [] : ["-vf", `scale=-2:trunc(min(${maxHeight}\\,ih)/2)*2`];
+}
+
 export async function transcodeWebmToMp4Adaptive(
   inputPath: string,
   outputPath: string,
@@ -247,10 +260,6 @@ export async function transcodeWebmToMp4Adaptive(
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "audiencia-transcode-"));
   const passLogPrefix = path.join(tempDir, "ffmpeg-passlog");
   const nullOutput = process.platform === "win32" ? "NUL" : "/dev/null";
-  const attempts = buildEncodingPlan({
-    durationSeconds,
-    inputBitrateKbps: probeInfo.inputBitrateKbps,
-  });
 
   try {
     let remuxAttemptMs: number | null = null;
@@ -280,6 +289,8 @@ export async function transcodeWebmToMp4Adaptive(
               durationSeconds,
               inputBytes: inputStat.size,
               outputBytes: remuxStat.size,
+              qualityReduced: false,
+              maxHeight: null,
             },
             timings: {
               ffmpegCheckMs,
@@ -302,8 +313,14 @@ export async function transcodeWebmToMp4Adaptive(
       durationSeconds,
       inputBytes: inputStat.size,
       outputBytes: 0,
+      qualityReduced: false,
+      maxHeight: null,
     };
-    for (const attempt of attempts) {
+    let attempt: EncodingPlan | null = buildFirstEncodingAttempt({
+      durationSeconds,
+      inputBitrateKbps: probeInfo.inputBitrateKbps,
+    });
+    while (attempt) {
       const attemptMeta: ConversionTimings["transcodeAttempts"][number] = {
         mode: attempt.mode,
         preset: attempt.preset,
@@ -317,11 +334,14 @@ export async function transcodeWebmToMp4Adaptive(
       const videoBitrate = `${videoKbps}k`;
       const audioBitrate = `${attempt.audioKbps}k`;
       const bufsize = `${Math.floor(videoKbps * 2)}k`;
+      const scaleArgs = scaleFilterArgs(attempt.maxHeight);
+      const channelArgs = attempt.qualityReduced ? ["-ac", "1"] : [];
 
       if (attempt.mode === "two-pass") {
         const pass1Start = Date.now();
         await execFileAsync("ffmpeg", [
           "-y", "-nostats", "-i", inputPath,
+          ...scaleArgs,
           "-c:v", "libx264", "-preset", attempt.preset,
           "-b:v", videoBitrate, "-maxrate", videoBitrate, "-bufsize", bufsize,
           "-pix_fmt", "yuv420p",
@@ -333,11 +353,12 @@ export async function transcodeWebmToMp4Adaptive(
         const pass2Start = Date.now();
         await execFileAsync("ffmpeg", [
           "-y", "-nostats", "-i", inputPath,
+          ...scaleArgs,
           "-c:v", "libx264", "-preset", attempt.preset,
           "-b:v", videoBitrate, "-maxrate", videoBitrate, "-bufsize", bufsize,
           "-pix_fmt", "yuv420p",
           "-pass", "2", "-passlogfile", passLogPrefix,
-          "-c:a", "aac", "-b:a", audioBitrate,
+          "-c:a", "aac", "-b:a", audioBitrate, ...channelArgs,
           "-movflags", "+faststart", outputPath,
         ]);
         attemptMeta.pass2OrSingleMs = Date.now() - pass2Start;
@@ -345,10 +366,11 @@ export async function transcodeWebmToMp4Adaptive(
         const singlePassStart = Date.now();
         await execFileAsync("ffmpeg", [
           "-y", "-nostats", "-i", inputPath,
+          ...scaleArgs,
           "-c:v", "libx264", "-preset", attempt.preset,
           "-b:v", videoBitrate, "-maxrate", videoBitrate, "-bufsize", bufsize,
           "-pix_fmt", "yuv420p",
-          "-c:a", "aac", "-b:a", audioBitrate,
+          "-c:a", "aac", "-b:a", audioBitrate, ...channelArgs,
           "-movflags", "+faststart", outputPath,
         ]);
         attemptMeta.pass2OrSingleMs = Date.now() - singlePassStart;
@@ -365,13 +387,15 @@ export async function transcodeWebmToMp4Adaptive(
         durationSeconds,
         inputBytes: inputStat.size,
         outputBytes: lastSize,
+        qualityReduced: attempt.qualityReduced,
+        maxHeight: attempt.maxHeight,
       };
       if (lastSize <= PJE_MAX_OUTPUT_SIZE_BYTES) {
         return {
           fileSize: lastSize,
           durationSeconds,
           exceededPjeLimit: false,
-          warning: null,
+          warning: attempt.qualityReduced ? REDUCED_QUALITY_WARNING : null,
           diagnostics: lastDiagnostics,
           timings: {
             ffmpegCheckMs,
@@ -383,6 +407,7 @@ export async function transcodeWebmToMp4Adaptive(
           },
         };
       }
+      attempt = transcodeAttempts.length === 1 ? buildSecondEncodingAttempt(attempt, lastSize) : null;
     }
 
     return {

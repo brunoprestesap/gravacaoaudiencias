@@ -12,6 +12,8 @@ export interface UploadResult {
     durationSeconds: number;
     inputBytes: number;
     outputBytes: number;
+    qualityReduced: boolean;
+    maxHeight: number | null;
   } | null;
   warning?: string | null;
   pje?: {

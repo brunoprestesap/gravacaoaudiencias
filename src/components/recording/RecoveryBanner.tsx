@@ -48,11 +48,13 @@ export const RecoveryBanner = () => {
   };
 
   const handleFinalizar = async () => {
-    const success = await finalizar();
-    if (success) {
-      toast.success("Gravação finalizada e enviada com sucesso.");
-    } else {
+    const result = await finalizar();
+    if (!result.ok) {
       toast.error("Erro ao consolidar/enviar gravação. Tente novamente.");
+    } else if (result.warning) {
+      toast.warning(result.warning);
+    } else {
+      toast.success("Gravação finalizada e enviada com sucesso.");
     }
   };
 
