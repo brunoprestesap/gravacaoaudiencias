@@ -124,6 +124,33 @@ export async function uploadConsolidated(
 }
 
 /**
+ * Tenta converter de novo o WebM guardado no servidor depois de uma conversão que falhou.
+ * Retorna `null` quando não há nada guardado para esse tamanho, e aí é preciso enviar.
+ * Depois de uma falha aqui, o servidor deixa de oferecer esse arquivo, então a tentativa
+ * seguinte cai no envio completo.
+ */
+export async function retryPendingConversion(
+  gravacaoId: string,
+  inputBytes: number,
+  duracao?: number
+): Promise<UploadResult | null> {
+  const formData = new FormData();
+  formData.append("mode", "retryConversion");
+  formData.append("gravacaoId", gravacaoId);
+  formData.append("inputBytes", String(inputBytes));
+  if (duracao) {
+    formData.append("duracao", String(Math.round(duracao)));
+  }
+
+  const res = await fetch("/api/upload", { method: "POST", body: formData });
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    throw new Error((await res.text()) || `Conversão falhou com status ${res.status}`);
+  }
+  return (await res.json()) as UploadResult;
+}
+
+/**
  * Faz upload dos segmentos de recuperação para remux no backend.
  * Cada segmento deve ser um WebM válido (ex.: uma sessão de gravação).
  */
@@ -138,6 +165,10 @@ export async function uploadRecoverySegments(
   if (segments.length === 0) {
     throw new Error("Nenhum segmento disponível para upload.");
   }
+
+  const inputBytes = segments.reduce((sum, segment) => sum + segment.size, 0);
+  const retried = await retryPendingConversion(gravacaoId, inputBytes, options?.duracao);
+  if (retried) return retried;
 
   const formData = new FormData();
   formData.append("mode", "recoverySegments");

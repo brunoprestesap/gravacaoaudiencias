@@ -6,6 +6,7 @@ import { prisma } from "@/lib/db";
 import { apiError, apiOk } from "@/lib/api-response";
 import { transcriptionAudioPathFor } from "@/lib/transcription-local/audio";
 import { resolveUploadPath } from "@/lib/upload-path";
+import { removePendingConversions } from "@/lib/conversao-pendente";
 
 interface RouteContext {
   params: Promise<{ id: string }>;
@@ -130,6 +131,12 @@ export async function DELETE(_req: NextRequest, context: RouteContext) {
       } catch {
         // Sibling pode não existir (gravação antiga ou extração que falhou).
       }
+    }
+
+    try {
+      await removePendingConversions(gravacao.id);
+    } catch (cleanupError) {
+      console.warn(`[gravacoes] WebM pendente não apagado na exclusão: gravacao=${id}`, cleanupError);
     }
 
     return apiOk({ success: true });
