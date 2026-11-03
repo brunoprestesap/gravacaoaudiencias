@@ -42,9 +42,11 @@ export interface ConversionTimings {
   totalConversionMs: number;
 }
 
+// Ninguém lê essa saída, então ela não pode encerrar o processo: o limite padrão
+// de 1 MiB do execFile mata o FFmpeg no meio de uma conversão longa.
 export function execFileAsync(command: string, args: string[]): Promise<void> {
   return new Promise((resolve, reject) => {
-    execFile(command, args, (error) => {
+    execFile(command, args, { maxBuffer: Infinity }, (error) => {
       if (error) {
         reject(error);
         return;
@@ -176,6 +178,7 @@ export async function tryRemuxToMp4(inputPath: string, outputPath: string): Prom
   try {
     await execFileAsync("ffmpeg", [
       "-y",
+      "-nostats",
       "-i",
       inputPath,
       "-c",
@@ -202,6 +205,7 @@ export async function extractTranscriptionAudio(
 ): Promise<void> {
   await execFileAsync("ffmpeg", [
     "-y",
+    "-nostats",
     "-i",
     webmPath,
     "-vn",
@@ -317,7 +321,7 @@ export async function transcodeWebmToMp4Adaptive(
       if (attempt.mode === "two-pass") {
         const pass1Start = Date.now();
         await execFileAsync("ffmpeg", [
-          "-y", "-i", inputPath,
+          "-y", "-nostats", "-i", inputPath,
           "-c:v", "libx264", "-preset", attempt.preset,
           "-b:v", videoBitrate, "-maxrate", videoBitrate, "-bufsize", bufsize,
           "-pix_fmt", "yuv420p",
@@ -328,7 +332,7 @@ export async function transcodeWebmToMp4Adaptive(
 
         const pass2Start = Date.now();
         await execFileAsync("ffmpeg", [
-          "-y", "-i", inputPath,
+          "-y", "-nostats", "-i", inputPath,
           "-c:v", "libx264", "-preset", attempt.preset,
           "-b:v", videoBitrate, "-maxrate", videoBitrate, "-bufsize", bufsize,
           "-pix_fmt", "yuv420p",
@@ -340,7 +344,7 @@ export async function transcodeWebmToMp4Adaptive(
       } else {
         const singlePassStart = Date.now();
         await execFileAsync("ffmpeg", [
-          "-y", "-i", inputPath,
+          "-y", "-nostats", "-i", inputPath,
           "-c:v", "libx264", "-preset", attempt.preset,
           "-b:v", videoBitrate, "-maxrate", videoBitrate, "-bufsize", bufsize,
           "-pix_fmt", "yuv420p",

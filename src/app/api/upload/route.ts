@@ -10,6 +10,7 @@ import { PJE_MAX_OUTPUT_SIZE_BYTES } from "@/lib/upload-encoding";
 import {
   assertFfmpegAvailable,
   assertRecordingIntegrity,
+  execFileAsync,
   extractTranscriptionAudio,
   transcodeWebmToMp4Adaptive,
   type EncodingDiagnostics,
@@ -108,16 +109,9 @@ async function remuxRecoverySegments(segments: File[], outputPath: string) {
       .join("\n");
     await writeFile(listPath, `${concatList}\n`, "utf-8");
 
-    // Use execFile directly via assertFfmpegAvailable-validated ffmpeg
-    const { execFile } = await import("child_process");
-    await new Promise<void>((resolve, reject) => {
-      execFile("ffmpeg", [
-        "-y", "-f", "concat", "-safe", "0", "-i", listPath, "-c", "copy", outputPath,
-      ], (error) => {
-        if (error) reject(error);
-        else resolve();
-      });
-    });
+    await execFileAsync("ffmpeg", [
+      "-y", "-nostats", "-f", "concat", "-safe", "0", "-i", listPath, "-c", "copy", outputPath,
+    ]);
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }
