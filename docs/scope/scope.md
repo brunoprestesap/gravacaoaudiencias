@@ -30,6 +30,7 @@ _Isto são recomendações para manter o trabalho em ordem, não obrigações. P
 | 9 | Conferir caminhos suspeitos nos ambientes | Fatia 1 | planned |
 | 10 | Duração correta após retomar | Fatia 1 | done |
 | 11 | Conversões longas interrompidas pelo limite de saída | Fatia 1 | done |
+| 26 | WebM apagado quando a conversão falha | Fatia 1 | done |
 | 12 | Validação na sala piloto | Fatia 2 | planned |
 | 13 | Limite de 300 MB do PJe em gravações longas | Fatia 2 | planned |
 | 14 | Transcrição travada ou duplicada | Fatia 3 | planned |
@@ -44,7 +45,6 @@ _Isto são recomendações para manter o trabalho em ordem, não obrigações. P
 | 23 | Listagem de gravações mais leve | Fatia 5 | planned |
 | 24 | Painel "Status do Sistema" real | Fatia 5 | planned |
 | 25 | Avaliação LGPD dos serviços externos | Fatia 6 | planned |
-| 26 | WebM apagado quando a conversão falha | Fatia 1 | planned |
 
 ## O que já existe
 
@@ -129,10 +129,10 @@ PR #13.
 
 PR #14.
 
-### 26. WebM apagado quando a conversão falha
+### 26. WebM apagado quando a conversão falha · done
 O `finally` em `src/app/api/upload/route.ts` apaga o WebM mesmo quando a conversão falha, e o servidor responde 500. A cópia que sobra são os chunks no navegador, então tentar de novo exige o mesmo perfil do navegador e repete todo o envio e a conversão.
 **Done when:** uma conversão que falha deixa o WebM no servidor, com um caminho para tentar de novo sem novo envio, e um caminho para limpá-lo depois.
-- [ ] Corrigir: `/debug WebM apagado quando a conversão falha`
+- [x] Corrigir: `/debug WebM apagado quando a conversão falha`
 
 ## Fatia 2: Provar o que foi corrigido e decidir o limite do PJe
 
@@ -226,7 +226,9 @@ Fora desta passada. Encontrados na análise por leitura de código, sem reprodu�
 - **Descartar gravação interrompida**: o banner não oferece descartar, embora `useRecovery.dismiss` exista.
 - **Segunda aba durante a gravação**: abrir o dashboard em outra aba marca a gravação em curso como interrompida e permite finalizá-la.
 - **Corrida ao salvar chunks**: dois `saveChunk` sobrepostos podem usar o mesmo índice, e o último chunk pode ficar de fora ao encerrar.
-- **Arquivos órfãos no upload**: uma conversão que falha deixa o WAV no disco, sem registro que permita apagá-lo.
+- **Arquivos órfãos no upload**: se a junção dos segmentos ou a escrita do WebM falham no meio (por exemplo, disco cheio), o arquivo parcial fica no disco.
+- **Tentar a conversão pela Consulta**: a nova tentativa do item 26 parte do navegador que tem os chunks. Se eles se perderam, o WebM fica guardado no servidor, mas só um operador consegue convertê-lo.
+- **Prazo para o WebM guardado**: ele só sai com uma conversão que dá certo ou com a exclusão da gravação, e pode ter até 2 GB · needs a decision.
 - **Range no stream**: a rota `stream` não limita o fim do intervalo ao tamanho do arquivo.
 - **Login sem limite de tentativas**: não há proteção contra tentativas repetidas · needs a decision.
 - **Papel e vara em cache no JWT**: mudanças só valem depois de um novo login · needs a decision.
