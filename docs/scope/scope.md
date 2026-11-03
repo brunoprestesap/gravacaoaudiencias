@@ -134,6 +134,8 @@ O `finally` em `src/app/api/upload/route.ts` apaga o WebM mesmo quando a convers
 **Done when:** uma conversão que falha deixa o WebM no servidor, com um caminho para tentar de novo sem novo envio, e um caminho para limpá-lo depois.
 - [x] Corrigir: `/debug WebM apagado quando a conversão falha`
 
+PR #15.
+
 ## Fatia 2: Provar o que foi corrigido e decidir o limite do PJe
 
 O resultado pode mudar a prioridade de tudo abaixo.
