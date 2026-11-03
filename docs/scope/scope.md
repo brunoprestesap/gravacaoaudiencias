@@ -32,7 +32,7 @@ _Isto são recomendações para manter o trabalho em ordem, não obrigações. P
 | 11 | Conversões longas interrompidas pelo limite de saída | Fatia 1 | done |
 | 26 | WebM apagado quando a conversão falha | Fatia 1 | done |
 | 12 | Validação na sala piloto | Fatia 2 | planned |
-| 13 | Limite de 300 MB do PJe em gravações longas | Fatia 2 | planned |
+| 13 | Limite de 300 MB do PJe em gravações longas | Fatia 2 | in-progress |
 | 14 | Transcrição travada ou duplicada | Fatia 3 | planned |
 | 15 | Limite de processos FFmpeg na transcrição | Fatia 3 | planned |
 | 16 | Reprocessar gravações antigas | Fatia 3 | planned |
@@ -148,10 +148,21 @@ Os testes usaram dispositivos falsos. Só o hardware real prova as correções d
 - [ ] Conferir se o armazenamento persistente é concedido no perfil real do navegador
 - [ ] Aba oculta por mais de 5 minutos, conferindo os quadros gravados
 
-### 13. Limite de 300 MB do PJe em gravações longas · needs a decision
+### 13. Limite de 300 MB do PJe em gravações longas · in-progress
 O piso de 500 kbps impede que gravações acima de cerca de 70 minutos caibam em 300 MB. A meta do produto é 2 horas, que dá cerca de 510 MB. As opções são aceitar o aviso atual, dividir em partes ou reduzir mais a qualidade. Código em `src/lib/upload-encoding.ts`.
 **Done when:** uma gravação de 2 horas tem um caminho claro até o PJe, e o usuário sabe o que fazer com ela.
-- [ ] Design it (spec): `/architect limite de 300 MB do PJe`
+- [x] Design it (spec): `/architect limite de 300 MB do PJe`
+- [ ] Build it: `/develop limite de 300 MB do PJe`
+   - [x] Faixas de redução, escala e segunda tentativa pelo tamanho medido (AC-1..5, AC-9, AC-11)
+   - [x] Avisos nos dois fluxos, inclusive no banner de recuperação (AC-6..8)
+   - [ ] Prova com vídeos reais de 2 horas: tamanho e tempo de conversão (AC-2, AC-12)
+   - [ ] Amostra aprovada por você, nos modos presencial e híbrido (AC-10)
+- [ ] Verify it: `/check verify limite de 300 MB do PJe`
+- [ ] Test it: `/test limite de 300 MB do PJe`
+- [ ] Review it (fresh model): `/check review limite de 300 MB do PJe`
+- [ ] Document it: `/document limite de 300 MB do PJe`
+
+Spec [0001](../specs/0001-reducao-video-limite-pje/index.md).
 
 ## Fatia 3: Transcrição
 
@@ -236,6 +247,9 @@ Fora desta passada. Encontrados na análise por leitura de código, sem reprodu�
 - **Papel e vara em cache no JWT**: mudanças só valem depois de um novo login · needs a decision.
 - **Validação no `POST /api/gravacoes`**: `modo` e o número do processo não são validados no servidor.
 - **Microfone da transcrição ao vivo**: se ligada, usa o microfone padrão do sistema, não necessariamente o selecionado.
+- **Vários arquivos por audiência no PJe**: confirmar se é aceito. Só importa se a amostra da spec 0001 reprovar ou se a exigência de imagem mudar · from spec 0001.
+- **Gravações antigas acima de 300 MB**: decidir se vale reconverter, caso alguma precise ir ao PJe · needs a decision · from spec 0001.
+- **Estimativa `MP4 ~` na gravação**: usa a taxa de gravação e mostra cerca de 1,7 GB em 2 horas, para um arquivo final de até 300 MB · from spec 0001.
 
 ## Legend
 

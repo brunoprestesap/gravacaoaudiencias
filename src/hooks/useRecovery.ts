@@ -25,6 +25,8 @@ interface RecoveryState {
   isConsolidating: boolean;
 }
 
+export type FinalizarResult = { ok: true; warning: string | null } | { ok: false };
+
 export const useRecovery = () => {
   const [state, setState] = useState<RecoveryState>({
     hasInterruptedRecording: false,
@@ -130,8 +132,8 @@ export const useRecovery = () => {
   }, [state.recoveryData, syncBackendStatus]);
 
   // Finalizar: consolidate chunks and upload
-  const finalizar = useCallback(async (): Promise<boolean> => {
-    if (!state.recoveryData) return false;
+  const finalizar = useCallback(async (): Promise<FinalizarResult> => {
+    if (!state.recoveryData) return { ok: false };
 
     setState((s) => ({ ...s, isConsolidating: true }));
     const { gravacaoId, metadata, modo } = state.recoveryData;
@@ -157,7 +159,7 @@ export const useRecovery = () => {
 
       // Upload with estimated duration
       const estimatedDurationSec = chunks.length * 5;
-      await uploadRecoverySegments(gravacaoId, segments, {
+      const uploadResult = await uploadRecoverySegments(gravacaoId, segments, {
         duracao: estimatedDurationSec,
       });
 
@@ -181,10 +183,10 @@ export const useRecovery = () => {
         isConsolidating: false,
       });
 
-      return true;
+      return { ok: true, warning: uploadResult.warning ?? null };
     } catch {
       setState((s) => ({ ...s, isConsolidating: false }));
-      return false;
+      return { ok: false };
     }
   }, [state.recoveryData]);
 
