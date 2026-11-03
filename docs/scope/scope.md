@@ -119,6 +119,8 @@ Ao retomar, o timer volta a zero e a `duracao` salva conta só o último trecho.
 **Done when:** depois de retomar, o timer, a `duracao` salva e o cálculo de bitrate consideram todos os trechos.
 - [x] Corrigir: `/debug duração após retomar`
 
+PR #13.
+
 ### 11. Conversões longas interrompidas pelo limite de saída
 `execFileAsync` em `src/lib/upload-ffmpeg.ts` usa o `maxBuffer` padrão de 1 MB. O FFmpeg roda sem `-nostats` e escreve progresso sem parar, então um passo com cerca de 1h30 de relógio pode ser encerrado no meio (estimativa). Ainda não foi reproduzido.
 **Done when:** uma conversão longa termina sem ser interrompida pelo limite de saída, com teste que prove isso.
