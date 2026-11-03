@@ -29,7 +29,7 @@ _Isto são recomendações para manter o trabalho em ordem, não obrigações. P
 | 8 | Transcrição ao vivo e papel inferido | Correções concluídas | done |
 | 9 | Conferir caminhos suspeitos nos ambientes | Fatia 1 | planned |
 | 10 | Duração correta após retomar | Fatia 1 | done |
-| 11 | Conversões longas interrompidas pelo limite de saída | Fatia 1 | planned |
+| 11 | Conversões longas interrompidas pelo limite de saída | Fatia 1 | done |
 | 12 | Validação na sala piloto | Fatia 2 | planned |
 | 13 | Limite de 300 MB do PJe em gravações longas | Fatia 2 | planned |
 | 14 | Transcrição travada ou duplicada | Fatia 3 | planned |
@@ -44,6 +44,7 @@ _Isto são recomendações para manter o trabalho em ordem, não obrigações. P
 | 23 | Listagem de gravações mais leve | Fatia 5 | planned |
 | 24 | Painel "Status do Sistema" real | Fatia 5 | planned |
 | 25 | Avaliação LGPD dos serviços externos | Fatia 6 | planned |
+| 26 | WebM apagado quando a conversão falha | Fatia 1 | planned |
 
 ## O que já existe
 
@@ -103,7 +104,7 @@ Quatro defeitos corrigidos, com a função desligada por padrão. PR #11.
 
 ## Fatia 1: Corrigir antes do piloto
 
-Uma conferência rápida e duas correções pequenas, para o piloto medir o produto sem tropeçar em falhas já conhecidas.
+Uma conferência rápida e três correções pequenas, para o piloto medir o produto sem tropeçar em falhas já conhecidas.
 
 ### 9. Conferir caminhos suspeitos nos ambientes
 Tarefa de operação, sem código. O PR #4 fechou a falha, mas um registro antigo pode indicar uma tentativa de ataque.
@@ -119,10 +120,19 @@ Ao retomar, o timer volta a zero e a `duracao` salva conta só o último trecho.
 **Done when:** depois de retomar, o timer, a `duracao` salva e o cálculo de bitrate consideram todos os trechos.
 - [x] Corrigir: `/debug duração após retomar`
 
-### 11. Conversões longas interrompidas pelo limite de saída
-`execFileAsync` em `src/lib/upload-ffmpeg.ts` usa o `maxBuffer` padrão de 1 MB. O FFmpeg roda sem `-nostats` e escreve progresso sem parar, então um passo com cerca de 1h30 de relógio pode ser encerrado no meio (estimativa). Ainda não foi reproduzido.
+PR #13.
+
+### 11. Conversões longas interrompidas pelo limite de saída · done
+`execFileAsync` em `src/lib/upload-ffmpeg.ts` usa o `maxBuffer` padrão de 1 MB. O FFmpeg roda sem `-nostats` e escreve progresso sem parar, então um passo com cerca de 43 minutos de relógio era encerrado no meio (medido com progresso acelerado).
 **Done when:** uma conversão longa termina sem ser interrompida pelo limite de saída, com teste que prove isso.
-- [ ] Reproduzir e corrigir: `/debug conversões longas`
+- [x] Reproduzir e corrigir: `/debug conversões longas`
+
+PR #14.
+
+### 26. WebM apagado quando a conversão falha
+O `finally` em `src/app/api/upload/route.ts` apaga o WebM mesmo quando a conversão falha, e o servidor responde 500. A cópia que sobra são os chunks no navegador, então tentar de novo exige o mesmo perfil do navegador e repete todo o envio e a conversão.
+**Done when:** uma conversão que falha deixa o WebM no servidor, com um caminho para tentar de novo sem novo envio, e um caminho para limpá-lo depois.
+- [ ] Corrigir: `/debug WebM apagado quando a conversão falha`
 
 ## Fatia 2: Provar o que foi corrigido e decidir o limite do PJe
 
