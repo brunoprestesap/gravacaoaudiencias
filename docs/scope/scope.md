@@ -127,6 +127,8 @@ PR #13.
 **Done when:** uma conversão longa termina sem ser interrompida pelo limite de saída, com teste que prove isso.
 - [x] Reproduzir e corrigir: `/debug conversões longas`
 
+PR #14.
+
 ### 26. WebM apagado quando a conversão falha
 O `finally` em `src/app/api/upload/route.ts` apaga o WebM mesmo quando a conversão falha, e o servidor responde 500. A cópia que sobra são os chunks no navegador, então tentar de novo exige o mesmo perfil do navegador e repete todo o envio e a conversão.
 **Done when:** uma conversão que falha deixa o WebM no servidor, com um caminho para tentar de novo sem novo envio, e um caminho para limpá-lo depois.
